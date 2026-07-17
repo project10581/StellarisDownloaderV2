@@ -4,7 +4,7 @@ StellarisDownloader V2 is a Windows x64 desktop rewrite of StellarisDownloader. 
 
 ## Current status
 
-Batch 0 is repository scaffolding only. The application currently contains an empty WPF shell and does not yet download or manage mods. The implementation plan and audited V1 feature baseline are available in [`docs/V2_PLAN.md`](docs/V2_PLAN.md) and [`docs/V1_FEATURE_MATRIX.md`](docs/V1_FEATURE_MATRIX.md).
+Batches 0-3 are complete. The Core library now provides settings and SQLite cache persistence, library scanning and Windows junction switching, Workshop metadata lookup, SteamCMD installation/process handling, serial download and update flows, and guarded Recycle Bin/permanent deletion with shared redownload behavior. The WPF application remains an empty shell until Batch 4. The implementation plan and audited V1 feature baseline are available in [`docs/V2_PLAN.md`](docs/V2_PLAN.md) and [`docs/V1_FEATURE_MATRIX.md`](docs/V1_FEATURE_MATRIX.md).
 
 ## Requirements
 

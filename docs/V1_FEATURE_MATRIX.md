@@ -173,3 +173,23 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 - 扫描阶段尚未访问 Workshop API；批次 3 接入批量元数据后补齐新 ID 的标题等远程字段，当前同 ID 会保留已有缓存元数据。
 - 批次 2 只提供 Core 结果与重试标记；设置窗口、切换摘要和启动时自动编排留到批次 4。
 - 删除模组的回收站策略不属于 junction 删除，留到批次 3 的模组操作服务实现。
+
+## 12. 批次 3 实现状态
+
+已完成：
+
+- `STM-01`、`STM-02`、`STM-03`：SteamCMD 在首次使用时从官方 Windows ZIP 安装到 V2 运行数据目录，安装后验证可启动；进程标准输出与错误输出异步读取，支持 60 分钟默认超时、用户取消和进程树终止；成功判断同时验证当前 Workshop ID 的最终输出状态、目标目录存在且非空，退出码仅作为诊断信息。
+- `UPD-01`：Workshop 元数据按每批最多 100 个 ID 请求，最多两个批次并行；单批失败与缺失元数据不会阻止其他批次完成。
+- `DB-03`、`DL-03`、`DL-04`、`STM-04`、`STM-05`：下载队列去重并顺序执行，复用进程级写锁；取消时当前项和未执行项均产生明确结果；首次失败不创建虚假记录，更新失败保留旧记录与安装快照，文件下载成功后即使元数据获取失败也只进行一次最终数据库写入。
+- `UPD-02`：更新检查优先比较 V2 下载时保存的远程更新时间快照；从旧目录导入的记录使用目录最后修改时间作近似判断，并通过结果字段标识；元数据缺失返回 `CheckFailed`。
+- `DEL-01`、`DEL-02`、`DEL-03`：删除目标只由当前库根和 ASCII 纯数字 ID 解析为直接子目录；上层解析器和底层 Windows 删除适配器均拒绝 reparse point；默认发送到回收站，失败后仅返回可再次确认永久删除，不自动降级；文件移除成功后才删除缓存记录，数据库失败返回部分失败和重新扫描提示；删除并重新下载复用同一删除核心及公共下载队列。
+- 新增强类型结果与接口，包括 `WorkshopMetadata`、`DownloadRequest`、`DownloadResult`、`UpdateCheckResult`、`DeleteResult`、`RedownloadResult`、`ISteamCmdService`、`IWorkshopClient`、`IModOperationService` 和文件删除边界。
+
+验证证据：`WorkshopClientTests`、`ProcessRunnerTests`、`SteamCmdOutputClassifierTests`、`SteamCmdServiceTests`、`ModOperationServiceTests`、`ModDeletePathResolverTests` 与 `WindowsFileDeletionServiceTests` 覆盖批处理边界、超时/取消、同 ID 最终终态、目录验证、单次最终写入、失败保留、缓存状态、安全路径、reparse point 和部分失败；批次完成时共有 69 项自动测试通过。
+
+已知限制与后续批次边界：
+
+- 普通 CI 不访问真实 SteamCMD 或 Workshop 网络；使用 HTTP、进程和文件系统替身以及脱敏日志夹具，真实联网下载留到人工验收。
+- 为避免自动测试污染用户回收站，回收站调用通过适配器替身验证；真实 Windows 回收站交互留到人工验收。永久删除只在显式请求时执行，并有真实临时目录测试。
+- 批次 3 只完成 Core 层服务；下载/更新选择、删除二次确认、进度与取消界面在批次 4/5 接入。
+- `DL-01` 的多行 ID/URL 解析和共享 `DownloadQueueViewModel` 属于批次 5；本批次公共下载服务接收已经验证的强类型请求。
