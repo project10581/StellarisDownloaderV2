@@ -155,3 +155,21 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 - `SET-08` 的 Serilog 配置留到应用组合与发布阶段；本批次只建立日志目录。
 - SQLite 缓存目前由调用方显式初始化并传入预期库根；批次 2 将接入扫描、junction、切换失败语义和启动修复流程。
 - 全进程写操作互斥将在批次 2/3 的业务服务组合时建立；当前 repository 自身只保证 SQLite 事务原子性。
+
+## 11. 批次 2 实现状态
+
+已完成：
+
+- `LIB-01`、`LIB-02`：库路径规范化与边界验证、SteamCMD `281990` junction 检查/创建/目标验证/替换/回滚；普通文件和非空普通目录不会被自动删除，删除 junction 时只移除 reparse point 本身。
+- `LIB-03`、`LIB-04`、`LIB-05`：只扫描库根下一层的 ASCII 纯数字目录；统计非数字目录和空数字目录；空目录不进入有效缓存；导入项以目录最后修改时间作为近似安装时间；同 ID 缓存元数据在 API 尚未接入或刷新失败时保留。
+- `LIB-07`：切换按“验证并创建目录 → junction 切换并验证 → 原子保存完整设置 → 立即标记旧缓存 stale → 扫描并事务重建”执行。junction 失败不提交设置/缓存；设置保存失败恢复旧 junction；设置提交后的扫描失败保留新设置和新 junction，并返回可重试扫描状态。
+- `LIB-08` 的 Core 层启动修复入口：`EnsureJunctionAsync` 可按设置中的库目录检测并修复 junction 目标不一致；UI 启动编排留到批次 4。
+- 新增进程级 `WriteOperationCoordinator`，库扫描、junction 修复和库切换使用同一把写锁；批次 3 的下载、更新和删除将复用该实例。
+
+验证证据：`WindowsJunctionManagerTests` 在 Windows 上真实创建、替换和回滚 junction，并验证目标文件不受删除影响；`LibraryServiceTests` 覆盖扫描摘要、提交顺序和三个失败阶段；`LibraryServiceIntegrationTests` 使用真实 JSON 设置、SQLite 和 Windows junction 完成端到端切换；`WriteOperationCoordinatorTests` 验证写操作互斥。
+
+已知限制与后续批次边界：
+
+- 扫描阶段尚未访问 Workshop API；批次 3 接入批量元数据后补齐新 ID 的标题等远程字段，当前同 ID 会保留已有缓存元数据。
+- 批次 2 只提供 Core 结果与重试标记；设置窗口、切换摘要和启动时自动编排留到批次 4。
+- 删除模组的回收站策略不属于 junction 删除，留到批次 3 的模组操作服务实现。
