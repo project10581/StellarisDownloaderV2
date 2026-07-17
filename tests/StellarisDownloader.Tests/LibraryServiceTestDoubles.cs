@@ -153,3 +153,54 @@ internal sealed class FailingReplaceModRepository : IModRepository
     public Task MarkCacheStaleAsync(CancellationToken cancellationToken = default) =>
         inner.MarkCacheStaleAsync(cancellationToken);
 }
+
+internal sealed class FailingDeleteModRepository : IModRepository
+{
+    private readonly IModRepository inner;
+
+    public FailingDeleteModRepository(IModRepository inner)
+    {
+        this.inner = inner;
+    }
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        inner.InitializeAsync(cancellationToken);
+
+    public Task<IReadOnlyList<ModRecord>> ListAsync(
+        string libraryRoot,
+        CancellationToken cancellationToken = default) =>
+        inner.ListAsync(libraryRoot, cancellationToken);
+
+    public Task<ModRecord?> GetAsync(
+        string libraryRoot,
+        string workshopId,
+        CancellationToken cancellationToken = default) =>
+        inner.GetAsync(libraryRoot, workshopId, cancellationToken);
+
+    public Task UpsertFinalResultAsync(
+        string libraryRoot,
+        ModRecord record,
+        CancellationToken cancellationToken = default) =>
+        inner.UpsertFinalResultAsync(libraryRoot, record, cancellationToken);
+
+    public Task<bool> DeleteAsync(
+        string libraryRoot,
+        string workshopId,
+        CancellationToken cancellationToken = default) =>
+        throw new IOException("Forced cache delete failure.");
+
+    public Task ReplaceSnapshotAsync(
+        string libraryRoot,
+        IReadOnlyCollection<ModRecord> records,
+        DateTimeOffset rebuiltAtUtc,
+        CancellationToken cancellationToken = default) =>
+        inner.ReplaceSnapshotAsync(libraryRoot, records, rebuiltAtUtc, cancellationToken);
+
+    public Task<CacheStateInfo> GetCacheStateAsync(
+        string? expectedLibraryRoot,
+        CancellationToken cancellationToken = default) =>
+        inner.GetCacheStateAsync(expectedLibraryRoot, cancellationToken);
+
+    public Task MarkCacheStaleAsync(CancellationToken cancellationToken = default) =>
+        inner.MarkCacheStaleAsync(cancellationToken);
+}

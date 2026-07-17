@@ -19,4 +19,18 @@ public interface IModOperationService
         IReadOnlyCollection<string> workshopIds,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default);
+
+    Task<DeleteResult> DeleteAsync(
+        string libraryRoot,
+        string workshopId,
+        bool permanently,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    Task<RedownloadResult> RedownloadAsync(
+        string libraryRoot,
+        string workshopId,
+        bool permanently,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
 }

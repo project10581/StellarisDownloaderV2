@@ -8,6 +8,7 @@ public sealed class ModOperationService : IModOperationService
     private readonly ISteamCmdService steamCmdService;
     private readonly IWorkshopClient workshopClient;
     private readonly IJunctionManager junctionManager;
+    private readonly IFileDeletionService fileDeletionService;
     private readonly WriteOperationCoordinator writeCoordinator;
     private readonly string junctionPath;
     private readonly TimeProvider timeProvider;
@@ -17,6 +18,7 @@ public sealed class ModOperationService : IModOperationService
         ISteamCmdService steamCmdService,
         IWorkshopClient workshopClient,
         IJunctionManager junctionManager,
+        IFileDeletionService fileDeletionService,
         WriteOperationCoordinator writeCoordinator,
         string junctionPath,
         TimeProvider? timeProvider = null)
@@ -25,6 +27,7 @@ public sealed class ModOperationService : IModOperationService
         ArgumentNullException.ThrowIfNull(steamCmdService);
         ArgumentNullException.ThrowIfNull(workshopClient);
         ArgumentNullException.ThrowIfNull(junctionManager);
+        ArgumentNullException.ThrowIfNull(fileDeletionService);
         ArgumentNullException.ThrowIfNull(writeCoordinator);
         ArgumentException.ThrowIfNullOrWhiteSpace(junctionPath);
 
@@ -32,6 +35,7 @@ public sealed class ModOperationService : IModOperationService
         this.steamCmdService = steamCmdService;
         this.workshopClient = workshopClient;
         this.junctionManager = junctionManager;
+        this.fileDeletionService = fileDeletionService;
         this.writeCoordinator = writeCoordinator;
         this.junctionPath = NormalizePath(junctionPath);
         this.timeProvider = timeProvider ?? TimeProvider.System;
@@ -113,6 +117,232 @@ public sealed class ModOperationService : IModOperationService
             })
             .ToArray();
         return await DownloadBatchAsync(requests, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DeleteResult> DeleteAsync(
+        string libraryRoot,
+        string workshopId,
+        bool permanently,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedRoot = NormalizePath(libraryRoot);
+        try
+        {
+            return await writeCoordinator.ExecuteAsync(
+                token => DeleteCoreAsync(
+                    normalizedRoot,
+                    workshopId,
+                    permanently,
+                    progress,
+                    token),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return new DeleteResult
+            {
+                WorkshopId = workshopId,
+                Status = OperationStatus.Cancelled,
+                ContentPath = SafeContentPath(normalizedRoot, workshopId),
+                Error = "Delete operation was cancelled before it started.",
+            };
+        }
+    }
+
+    public async Task<RedownloadResult> RedownloadAsync(
+        string libraryRoot,
+        string workshopId,
+        bool permanently,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedRoot = NormalizePath(libraryRoot);
+        try
+        {
+            return await writeCoordinator.ExecuteAsync(
+                async token =>
+                {
+                    var deleteResult = await DeleteCoreAsync(
+                        normalizedRoot,
+                        workshopId,
+                        permanently,
+                        progress,
+                        token).ConfigureAwait(false);
+                    if (deleteResult.Status != OperationStatus.Succeeded)
+                    {
+                        return new RedownloadResult(deleteResult, DownloadResult: null);
+                    }
+
+                    var batchResult = await DownloadBatchCoreAsync(
+                        [new DownloadRequest
+                        {
+                            WorkshopId = workshopId,
+                            LibraryRoot = normalizedRoot,
+                        }],
+                        progress,
+                        token).ConfigureAwait(false);
+                    return new RedownloadResult(
+                        deleteResult,
+                        batchResult.Results.SingleOrDefault());
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            var deleteResult = new DeleteResult
+            {
+                WorkshopId = workshopId,
+                Status = OperationStatus.Cancelled,
+                ContentPath = SafeContentPath(normalizedRoot, workshopId),
+                Error = "Redownload operation was cancelled before it started.",
+            };
+            return new RedownloadResult(deleteResult, DownloadResult: null);
+        }
+    }
+
+    private async Task<DeleteResult> DeleteCoreAsync(
+        string libraryRoot,
+        string workshopId,
+        bool permanently,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        string contentPath;
+        try
+        {
+            contentPath = ModDeletePathResolver.Resolve(libraryRoot, workshopId);
+        }
+        catch (Exception exception) when (IsOperationalFailure(exception))
+        {
+            return FailedDelete(
+                workshopId,
+                SafeContentPath(libraryRoot, workshopId),
+                exception.Message);
+        }
+
+        var cacheState = await modRepository.GetCacheStateAsync(
+            libraryRoot,
+            cancellationToken).ConfigureAwait(false);
+        if (cacheState.State != CacheState.Valid)
+        {
+            return FailedDelete(
+                workshopId,
+                contentPath,
+                "The mod cache is stale or belongs to a different library root.");
+        }
+
+        var existingRecord = await modRepository.GetAsync(
+            libraryRoot,
+            workshopId,
+            cancellationToken).ConfigureAwait(false);
+        var directoryExisted = Directory.Exists(contentPath);
+        if (directoryExisted)
+        {
+            progress?.Report(new OperationProgress(
+                "DeletingMod",
+                Completed: 0,
+                Total: 1,
+                workshopId,
+                permanently
+                    ? $"Permanently deleting Workshop item {workshopId}."
+                    : $"Sending Workshop item {workshopId} to the Recycle Bin."));
+            try
+            {
+                if (permanently)
+                {
+                    await fileDeletionService.DeleteDirectoryPermanentlyAsync(
+                        contentPath,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await fileDeletionService.SendDirectoryToRecycleBinAsync(
+                        contentPath,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return new DeleteResult
+                {
+                    WorkshopId = workshopId,
+                    Status = OperationStatus.Cancelled,
+                    ContentPath = contentPath,
+                    Error = "Delete operation was cancelled.",
+                };
+            }
+            catch (Exception exception) when (IsOperationalFailure(exception))
+            {
+                return new DeleteResult
+                {
+                    WorkshopId = workshopId,
+                    Status = OperationStatus.Failed,
+                    ContentPath = contentPath,
+                    CanRetryPermanently = !permanently,
+                    Error = exception.Message,
+                };
+            }
+
+            if (Directory.Exists(contentPath))
+            {
+                return new DeleteResult
+                {
+                    WorkshopId = workshopId,
+                    Status = OperationStatus.Failed,
+                    ContentPath = contentPath,
+                    CanRetryPermanently = !permanently,
+                    Error = "The mod directory still exists after the delete operation.",
+                };
+            }
+        }
+
+        try
+        {
+            var recordRemoved = await modRepository.DeleteAsync(
+                libraryRoot,
+                workshopId,
+                cancellationToken).ConfigureAwait(false);
+            if (existingRecord is not null && !recordRemoved)
+            {
+                return new DeleteResult
+                {
+                    WorkshopId = workshopId,
+                    Status = OperationStatus.Failed,
+                    ContentPath = contentPath,
+                    FilesRemoved = directoryExisted,
+                    RequiresRescan = true,
+                    Error = "Mod files were removed, but the cache record could not be deleted.",
+                };
+            }
+
+            progress?.Report(new OperationProgress(
+                "DeletingMod",
+                Completed: 1,
+                Total: 1,
+                workshopId,
+                $"Deleted Workshop item {workshopId}."));
+            return new DeleteResult
+            {
+                WorkshopId = workshopId,
+                Status = OperationStatus.Succeeded,
+                ContentPath = contentPath,
+                FilesRemoved = directoryExisted,
+                RecordRemoved = recordRemoved,
+            };
+        }
+        catch (Exception exception) when (IsOperationalFailure(exception))
+        {
+            return new DeleteResult
+            {
+                WorkshopId = workshopId,
+                Status = OperationStatus.Failed,
+                ContentPath = contentPath,
+                FilesRemoved = directoryExisted,
+                RequiresRescan = true,
+                Error = $"Mod files were removed, but the cache update failed: {exception.Message}",
+            };
+        }
     }
 
     private async Task<DownloadBatchResult> DownloadBatchCoreAsync(
@@ -359,6 +589,25 @@ public sealed class ModOperationService : IModOperationService
         };
     }
 
+    private static DeleteResult FailedDelete(
+        string workshopId,
+        string contentPath,
+        string error)
+    {
+        return new DeleteResult
+        {
+            WorkshopId = workshopId,
+            Status = OperationStatus.Failed,
+            ContentPath = contentPath,
+            Error = error,
+        };
+    }
+
+    private static string SafeContentPath(string libraryRoot, string workshopId) =>
+        IsValidWorkshopId(workshopId)
+            ? Path.Combine(libraryRoot, workshopId)
+            : libraryRoot;
+
     private static string BuildContentPath(DownloadRequest request) =>
         IsValidWorkshopId(request.WorkshopId)
             ? Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId)
@@ -369,6 +618,7 @@ public sealed class ModOperationService : IModOperationService
             or IOException
             or UnauthorizedAccessException
             or InvalidOperationException
+            or ArgumentException
             or NotSupportedException;
 
     private static bool IsValidWorkshopId(string workshopId) =>

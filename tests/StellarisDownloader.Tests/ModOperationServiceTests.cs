@@ -214,6 +214,142 @@ public sealed class ModOperationServiceTests
         Assert.NotEqual(fixture.LibraryRoot, fixture.Junction.State.TargetPath);
     }
 
+    [Fact]
+    public async Task DeleteUsesRecycleBinByDefaultThenRemovesCacheRecord()
+    {
+        using var fixture = await ModOperationFixture.CreateAsync(
+            (request, _) => Task.FromResult(Success(request)),
+            [CreateRecord("100", "Delete me", InitialTime)]);
+        await CreateModDirectoryAsync(fixture.LibraryRoot, "100");
+
+        var result = await fixture.Service.DeleteAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: false);
+
+        Assert.Equal(OperationStatus.Succeeded, result.Status);
+        Assert.True(result.FilesRemoved);
+        Assert.True(result.RecordRemoved);
+        Assert.Equal(1, fixture.FileDeletion.RecycleCallCount);
+        Assert.Equal(0, fixture.FileDeletion.PermanentCallCount);
+        Assert.False(Directory.Exists(Path.Combine(fixture.LibraryRoot, "100")));
+        Assert.Null(await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"));
+    }
+
+    [Fact]
+    public async Task RecycleFailureRequiresASeparatePermanentDeleteConfirmation()
+    {
+        using var fixture = await ModOperationFixture.CreateAsync(
+            (request, _) => Task.FromResult(Success(request)),
+            [CreateRecord("100", "Delete me", InitialTime)]);
+        await CreateModDirectoryAsync(fixture.LibraryRoot, "100");
+        fixture.FileDeletion.FailRecycle = true;
+
+        var recycleResult = await fixture.Service.DeleteAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: false);
+
+        Assert.Equal(OperationStatus.Failed, recycleResult.Status);
+        Assert.True(recycleResult.CanRetryPermanently);
+        Assert.True(Directory.Exists(Path.Combine(fixture.LibraryRoot, "100")));
+        Assert.NotNull(await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"));
+
+        var permanentResult = await fixture.Service.DeleteAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: true);
+
+        Assert.Equal(OperationStatus.Succeeded, permanentResult.Status);
+        Assert.Equal(1, fixture.FileDeletion.PermanentCallCount);
+        Assert.Null(await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"));
+    }
+
+    [Fact]
+    public async Task DatabaseFailureAfterFileRemovalReturnsPartialFailureAndRequiresRescan()
+    {
+        using var fixture = await ModOperationFixture.CreateAsync(
+            (request, _) => Task.FromResult(Success(request)),
+            [CreateRecord("100", "Delete me", InitialTime)],
+            failDatabaseDelete: true);
+        await CreateModDirectoryAsync(fixture.LibraryRoot, "100");
+
+        var result = await fixture.Service.DeleteAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: false);
+
+        Assert.Equal(OperationStatus.Failed, result.Status);
+        Assert.True(result.FilesRemoved);
+        Assert.True(result.RequiresRescan);
+        Assert.False(Directory.Exists(Path.Combine(fixture.LibraryRoot, "100")));
+        Assert.NotNull(await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"));
+    }
+
+    [Fact]
+    public async Task MissingDirectoryIsAlreadyRemovedSoItsCacheRecordCanBeDeleted()
+    {
+        using var fixture = await ModOperationFixture.CreateAsync(
+            (request, _) => Task.FromResult(Success(request)),
+            [CreateRecord("100", "Missing files", InitialTime)]);
+
+        var result = await fixture.Service.DeleteAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: false);
+
+        Assert.Equal(OperationStatus.Succeeded, result.Status);
+        Assert.False(result.FilesRemoved);
+        Assert.True(result.RecordRemoved);
+        Assert.Equal(0, fixture.FileDeletion.RecycleCallCount);
+        Assert.Null(await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"));
+    }
+
+    [Fact]
+    public async Task DeleteAndRedownloadReusesSafeDeleteThenTheSharedDownloadQueue()
+    {
+        using var fixture = await ModOperationFixture.CreateAsync(
+            (request, _) => Task.FromResult(Success(request)),
+            [CreateRecord("100", "Old", InitialTime)],
+            new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal)
+            {
+                ["100"] = Metadata("100", "Redownloaded", CompletionTime),
+            });
+        await CreateModDirectoryAsync(fixture.LibraryRoot, "100");
+
+        var result = await fixture.Service.RedownloadAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: false);
+
+        Assert.Equal(OperationStatus.Succeeded, result.DeleteResult.Status);
+        Assert.Equal(OperationStatus.Succeeded, result.DownloadResult?.Status);
+        Assert.Equal(1, fixture.FileDeletion.RecycleCallCount);
+        Assert.Equal(["100"], fixture.SteamCmd.DownloadedIds);
+        Assert.Equal(
+            "Redownloaded",
+            (await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"))?.Title);
+    }
+
+    [Fact]
+    public async Task StaleCacheBlocksDeleteBeforeTouchingFiles()
+    {
+        using var fixture = await ModOperationFixture.CreateAsync(
+            (request, _) => Task.FromResult(Success(request)),
+            [CreateRecord("100", "Keep", InitialTime)]);
+        await CreateModDirectoryAsync(fixture.LibraryRoot, "100");
+        await fixture.Repository.MarkCacheStaleAsync();
+
+        var result = await fixture.Service.DeleteAsync(
+            fixture.LibraryRoot,
+            "100",
+            permanently: false);
+
+        Assert.Equal(OperationStatus.Failed, result.Status);
+        Assert.True(Directory.Exists(Path.Combine(fixture.LibraryRoot, "100")));
+        Assert.Equal(0, fixture.FileDeletion.RecycleCallCount);
+    }
+
     private static DownloadResult Success(DownloadRequest request) => new()
     {
         WorkshopId = request.WorkshopId,
@@ -222,6 +358,13 @@ public sealed class ModOperationServiceTests
         FolderExists = true,
         FolderNonEmpty = true,
     };
+
+    private static async Task CreateModDirectoryAsync(string libraryRoot, string workshopId)
+    {
+        var path = Path.Combine(libraryRoot, workshopId);
+        Directory.CreateDirectory(path);
+        await File.WriteAllTextAsync(Path.Combine(path, "content.txt"), "content");
+    }
 
     private static DownloadResult Failure(DownloadRequest request, string error) => new()
     {
@@ -290,6 +433,7 @@ public sealed class ModOperationServiceTests
             StubSteamCmdService steamCmd,
             StubWorkshopClient workshop,
             MemoryJunctionManager junction,
+            StubFileDeletionService fileDeletion,
             WriteOperationCoordinator coordinator,
             ModOperationService service,
             string libraryRoot,
@@ -300,6 +444,7 @@ public sealed class ModOperationServiceTests
             SteamCmd = steamCmd;
             Workshop = workshop;
             Junction = junction;
+            FileDeletion = fileDeletion;
             this.coordinator = coordinator;
             Service = service;
             LibraryRoot = libraryRoot;
@@ -316,6 +461,8 @@ public sealed class ModOperationServiceTests
 
         public MemoryJunctionManager Junction { get; }
 
+        public StubFileDeletionService FileDeletion { get; }
+
         public ModOperationService Service { get; }
 
         public string LibraryRoot { get; }
@@ -325,7 +472,8 @@ public sealed class ModOperationServiceTests
         public static async Task<ModOperationFixture> CreateAsync(
             Func<DownloadRequest, CancellationToken, Task<DownloadResult>> download,
             IReadOnlyCollection<ModRecord>? initialRecords = null,
-            IReadOnlyDictionary<string, WorkshopMetadata>? metadata = null)
+            IReadOnlyDictionary<string, WorkshopMetadata>? metadata = null,
+            bool failDatabaseDelete = false)
         {
             var temporaryDirectory = new TemporaryDirectory();
             var libraryRoot = temporaryDirectory.GetPath("library");
@@ -343,12 +491,17 @@ public sealed class ModOperationServiceTests
             var junctionPath = temporaryDirectory.GetPath(
                 Path.Combine("steamcmd", "steamapps", "workshop", "content", "281990"));
             var junction = new MemoryJunctionManager(junctionPath, libraryRoot);
+            var fileDeletion = new StubFileDeletionService();
             var coordinator = new WriteOperationCoordinator();
+            IModRepository serviceRepository = failDatabaseDelete
+                ? new FailingDeleteModRepository(repository)
+                : repository;
             var service = new ModOperationService(
-                repository,
+                serviceRepository,
                 steamCmd,
                 workshop,
                 junction,
+                fileDeletion,
                 coordinator,
                 junctionPath,
                 new FixedTimeProvider(CompletionTime));
@@ -358,6 +511,7 @@ public sealed class ModOperationServiceTests
                 steamCmd,
                 workshop,
                 junction,
+                fileDeletion,
                 coordinator,
                 service,
                 libraryRoot,

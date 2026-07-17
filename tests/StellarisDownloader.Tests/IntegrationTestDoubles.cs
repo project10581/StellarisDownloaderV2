@@ -123,3 +123,52 @@ internal sealed class FixedTimeProvider : TimeProvider
 
     public override DateTimeOffset GetUtcNow() => utcNow;
 }
+
+internal sealed class StubFileDeletionService : IFileDeletionService
+{
+    public bool FailRecycle { get; set; }
+
+    public bool FailPermanent { get; set; }
+
+    public int RecycleCallCount { get; private set; }
+
+    public int PermanentCallCount { get; private set; }
+
+    public Task SendDirectoryToRecycleBinAsync(
+        string directoryPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RecycleCallCount++;
+        if (FailRecycle)
+        {
+            throw new IOException("Forced Recycle Bin failure.");
+        }
+
+        DeleteIfPresent(directoryPath);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteDirectoryPermanentlyAsync(
+        string directoryPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        PermanentCallCount++;
+        if (FailPermanent)
+        {
+            throw new IOException("Forced permanent deletion failure.");
+        }
+
+        DeleteIfPresent(directoryPath);
+        return Task.CompletedTask;
+    }
+
+    private static void DeleteIfPresent(string directoryPath)
+    {
+        if (Directory.Exists(directoryPath))
+        {
+            Directory.Delete(directoryPath, recursive: true);
+        }
+    }
+}
