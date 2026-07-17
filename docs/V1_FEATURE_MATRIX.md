@@ -138,3 +138,20 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 - 批次 0 只允许创建 .NET solution、两个生产项目、一个测试项目、仓库配置、README 和 Windows CI。
 - 本矩阵中的功能状态均为后续批次目标；批次 0 不实现任何下载、数据库、junction、更新或 UI 业务行为。
 - 每完成一个后续批次，应更新相应行的实现状态、测试证据和已知限制。
+
+## 10. 批次 1 实现状态
+
+已完成：
+
+- `SET-01`、`SET-02`、`SET-03`、`SET-04`、`SET-07` 的 Core 层能力：固定设置模型、首次启动判定、完整对象单次保存、同目录临时文件与落盘刷新后的原子替换、损坏文件带时间戳备份，以及 `%LOCALAPPDATA%\StellarisDownloaderV2\` 运行目录结构。
+- `DB-01`、`DB-02`、`DB-03` 与 `LIB-06` 的持久化基础：强类型 `ModRecord`、单行 `cache_state`、显式一次初始化、短生命周期连接、根目录绑定、RootMismatch 隔离、事务快照替换、失败回滚后 stale 标记、同 ID 旧元数据保留，以及单次最终 upsert。
+- 自动测试覆盖首次默认值、完整设置往返、原子替换失败保护、损坏 JSON 备份、schema 幂等、CRUD、根目录不匹配、旧元数据保留、快照失败回滚和单次最终数据库写入。
+
+验证证据：`JsonSettingsStoreTests`、`AppDataPathsTests`、`SqliteModRepositoryTests`；批次完成时运行 `dotnet restore`、`dotnet format --verify-no-changes`、`dotnet build -c Release` 和 `dotnet test -c Release`。
+
+已知限制与后续批次边界：
+
+- `SET-05` 的 WPF 中英文资源和即时切换留到批次 4；批次 1 尚无 UI 初始化向导。
+- `SET-08` 的 Serilog 配置留到应用组合与发布阶段；本批次只建立日志目录。
+- SQLite 缓存目前由调用方显式初始化并传入预期库根；批次 2 将接入扫描、junction、切换失败语义和启动修复流程。
+- 全进程写操作互斥将在批次 2/3 的业务服务组合时建立；当前 repository 自身只保证 SQLite 事务原子性。
