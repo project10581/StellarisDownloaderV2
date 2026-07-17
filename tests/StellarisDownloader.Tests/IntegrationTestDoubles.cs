@@ -57,3 +57,69 @@ internal sealed class StubProcessRunner : IProcessRunner
         return Task.FromResult(resultFactory(executablePath, arguments));
     }
 }
+
+internal sealed class StubSteamCmdService : ISteamCmdService
+{
+    private readonly Func<DownloadRequest, CancellationToken, Task<DownloadResult>> download;
+
+    public StubSteamCmdService(
+        Func<DownloadRequest, CancellationToken, Task<DownloadResult>> download)
+    {
+        this.download = download;
+    }
+
+    public List<string> DownloadedIds { get; } = [];
+
+    public Task<SteamCmdInstallationResult> EnsureInstalledAsync(
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new SteamCmdInstallationResult(
+            OperationStatus.Succeeded,
+            "steamcmd.exe",
+            InstalledNow: false,
+            Error: null));
+
+    public Task<DownloadResult> DownloadAsync(
+        DownloadRequest request,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        DownloadedIds.Add(request.WorkshopId);
+        return download(request, cancellationToken);
+    }
+}
+
+internal sealed class StubWorkshopClient : IWorkshopClient
+{
+    private readonly IReadOnlyDictionary<string, WorkshopMetadata> metadata;
+
+    public StubWorkshopClient(IReadOnlyDictionary<string, WorkshopMetadata>? metadata = null)
+    {
+        this.metadata = metadata
+            ?? new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal);
+    }
+
+    public IReadOnlyList<string> LastRequestedIds { get; private set; } = [];
+
+    public Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataBatchAsync(
+        IReadOnlyCollection<string> workshopIds,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        LastRequestedIds = workshopIds.ToArray();
+        return Task.FromResult(metadata);
+    }
+}
+
+internal sealed class FixedTimeProvider : TimeProvider
+{
+    private readonly DateTimeOffset utcNow;
+
+    public FixedTimeProvider(DateTimeOffset utcNow)
+    {
+        this.utcNow = utcNow;
+    }
+
+    public override DateTimeOffset GetUtcNow() => utcNow;
+}

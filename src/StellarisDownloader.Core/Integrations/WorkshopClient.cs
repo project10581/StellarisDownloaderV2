@@ -114,6 +114,10 @@ public sealed class WorkshopClient : IWorkshopClient
         {
             return [];
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return [];
+        }
     }
 
     private static IEnumerable<KeyValuePair<string, string>> BuildFormValues(
