@@ -21,8 +21,8 @@
 
 | ID | 能力 | V1 实际行为 | 源码/测试证据 | V2 处置 | 批次 | V2 验收要点 |
 |---|---|---|---|---|---|---|
-| UI-01 | 双栏主窗口 | PySide6 `QSplitter`；实际为左侧详情、右侧搜索/排序/列表，初始宽度 500/900。 | `gui.py:MainWindow.init_ui`、`GUI_README.md` | 保留并改进 | 4 | 按计划采用左侧列表、右侧详情；窗口可调整且信息不丢失。 |
-| UI-02 | 模组列表 | 从 SQLite 读取全部记录并显示“标题 + Workshop ID”；使用 `QListWidget`。 | `gui.py:refresh_mod_list`、`ui/mod_list.py` | 保留并改进 | 4 | WPF 列表启用 UI 虚拟化；缓存有效时显示全部记录。 |
+| UI-01 | 双栏主窗口 | PySide6 `QSplitter`；实际为左侧详情、右侧搜索/排序/列表，初始宽度 500/900。 | `gui.py:MainWindow.init_ui`、`GUI_README.md` | 保留 | 4 | 保留左侧详情、右侧搜索/排序/列表；窗口可调整且信息不丢失。 |
+| UI-02 | 模组列表 | 从 SQLite 读取全部记录并显示“标题 + Workshop ID”；使用 `QListWidget`。 | `gui.py:refresh_mod_list`、`ui/mod_list.py` | 保留并改进 | 4 | WPF 列表启用 UI 虚拟化；列表项只显示标题，不显示 Workshop ID；缓存有效时显示全部记录。 |
 | UI-03 | 搜索 | 标题和 Workshop ID 不区分大小写包含匹配。 | `ui/mod_list.py:mod_matches_search`、`tests/test_mod_list.py` | 保留 | 4 | `ICollectionView` 过滤；标题与 ID 均可命中。 |
 | UI-04 | 四种排序 | 标题升序；远程更新时间、最后下载时间、文件大小降序。 | `ui/mod_list.py:sort_mod_records`、`tests/test_mod_list.py` | 保留 | 4 | 四种排序正确且不重建整个控件。 |
 | UI-05 | 列表刷新 | 重新查询数据库、清空并重建整个 `QListWidget`。 | `gui.py:refresh_mod_list` | 保留并改进 | 4 | 刷新数据源并保留合理的筛选/排序/选择状态。 |
