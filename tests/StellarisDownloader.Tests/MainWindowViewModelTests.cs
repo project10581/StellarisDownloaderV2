@@ -2,6 +2,7 @@ using System.Windows.Media;
 using StellarisDownloader.App.ViewModels;
 using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.Tests;
 
@@ -159,6 +160,223 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(2, preview.CallCount);
     }
 
+    [Fact]
+    public async Task DeleteIsRejectedWithoutASelection()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        AssertReady(fixture.ViewModel);
+
+        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+        Assert.False(result.Started);
+        Assert.Null(result.DeleteResult);
+        Assert.Equal(0, fixture.Operations.DeleteCallCount);
+    }
+
+    [Fact]
+    public async Task DeleteIsRejectedWhenTheCacheIsUnsafe()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+        await fixture.Repository.MarkCacheStaleAsync();
+        await fixture.ViewModel.RefreshAsync();
+
+        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+        Assert.False(result.Started);
+        Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
+        Assert.Equal(0, fixture.Operations.DeleteCallCount);
+    }
+
+    [Fact]
+    public async Task SuccessfulRecycleDeleteRefreshesTheLibrary()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+        fixture.Operations.DeleteHandler = async (root, id, permanently, _, token) =>
+        {
+            Assert.False(permanently);
+            Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
+            return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
+        };
+
+        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+        Assert.True(result.Started);
+        Assert.Equal(OperationStatus.Succeeded, result.DeleteResult?.Status);
+        Assert.Equal(2, VisibleItems(fixture.ViewModel).Count);
+        Assert.Null(fixture.ViewModel.SelectedMod);
+        Assert.Equal(2, fixture.Library.EnsureJunctionCount);
+    }
+
+    [Fact]
+    public async Task RecycleFailureReturnsThePermanentRetrySignalWithoutFallingBack()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+        fixture.Operations.DeleteHandler = (_, id, permanently, _, _) =>
+        {
+            Assert.False(permanently);
+            return Task.FromResult(DeleteResultFor(
+                id,
+                OperationStatus.Failed,
+                canRetryPermanently: true,
+                error: "Recycle Bin failed."));
+        };
+
+        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+        Assert.True(result.CanRetryPermanently);
+        Assert.False(result.QueuedForRedownload);
+        Assert.Equal("Recycle Bin failed.", fixture.ViewModel.LastError);
+        Assert.Equal(1, fixture.Operations.DeleteCallCount);
+        Assert.Equal(0, fixture.Operations.PermanentDeleteCallCount);
+    }
+
+    [Fact]
+    public async Task CacheFailureAfterFileRemovalMakesTheLibraryStaleAndRequiresRescan()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+        fixture.Operations.DeleteHandler = (_, id, _, _, _) => Task.FromResult(DeleteResultFor(
+            id,
+            OperationStatus.Failed,
+            filesRemoved: true,
+            requiresRescan: true,
+            error: "Cache delete failed."));
+
+        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+        Assert.True(result.RequiresRescan);
+        Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
+        Assert.False(fixture.ViewModel.CanModifyLibrary);
+        Assert.Empty(VisibleItems(fixture.ViewModel));
+        Assert.Contains("Rescan", fixture.ViewModel.LastError, StringComparison.Ordinal);
+        Assert.Equal(
+            CacheState.Stale,
+            (await fixture.Repository.GetCacheStateAsync(fixture.LibraryRoot)).State);
+    }
+
+    [Fact]
+    public async Task DeleteAndRedownloadUsesOnlyTheSharedQueue()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+        fixture.Operations.DeleteHandler = async (root, id, _, _, token) =>
+        {
+            Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
+            return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
+        };
+
+        var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
+
+        Assert.True(result.QueuedForRedownload);
+        Assert.Equal("100", Assert.Single(fixture.DownloadQueue.Items).WorkshopId);
+        Assert.Equal(DownloadQueueItemStatus.Ready, fixture.DownloadQueue.Items[0].Status);
+        Assert.Equal(0, fixture.Operations.RedownloadCallCount);
+        Assert.Equal(1, fixture.Operations.DeleteCallCount);
+    }
+
+    [Fact]
+    public void DeleteAndRedownloadReplacesATerminalDuplicateWithAReadyQueueItem()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            await fixture.DownloadQueue.EnqueueAsync("100");
+            await fixture.DownloadQueue.StartAsync();
+            Assert.Equal(
+                DownloadQueueItemStatus.Succeeded,
+                Assert.Single(fixture.DownloadQueue.Items).Status);
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            fixture.Operations.DeleteHandler = async (root, id, _, _, token) =>
+            {
+                Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
+                return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
+            };
+
+            var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
+
+            Assert.True(result.QueuedForRedownload);
+            var replacement = Assert.Single(fixture.DownloadQueue.Items);
+            Assert.Equal("100", replacement.WorkshopId);
+            Assert.Equal(DownloadQueueItemStatus.Ready, replacement.Status);
+            Assert.True(fixture.DownloadQueue.CanStart);
+            Assert.Equal(0, fixture.Operations.RedownloadCallCount);
+        });
+    }
+
+    [Fact]
+    public async Task FailedDeleteDoesNotEnterTheDownloadQueue()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        await fixture.ViewModel.InitializeAsync();
+        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+        fixture.Operations.DeleteHandler = (_, id, _, _, _) => Task.FromResult(DeleteResultFor(
+            id,
+            OperationStatus.Failed,
+            error: "Delete failed."));
+
+        var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
+
+        Assert.False(result.QueuedForRedownload);
+        Assert.Empty(fixture.DownloadQueue.Items);
+        Assert.Equal(0, fixture.Operations.RedownloadCallCount);
+    }
+
+    [Fact]
+    public void RunningSharedQueueDisablesAndRejectsLibraryDelete()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            var entered = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<DownloadBatchResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            fixture.Operations.DownloadHandler = (_, _, _) =>
+            {
+                entered.SetResult(true);
+                return release.Task;
+            };
+            await fixture.DownloadQueue.EnqueueAsync("900");
+
+            var queueRun = fixture.DownloadQueue.StartAsync();
+            await entered.Task;
+
+            Assert.False(fixture.ViewModel.CanRunWriteOperations);
+            Assert.False(fixture.ViewModel.CanModifySelectedMod);
+            Assert.False(fixture.ViewModel.RescanCommand.CanExecute(null));
+            var deleteResult = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+            Assert.False(deleteResult.Started);
+            Assert.Equal(0, fixture.Operations.DeleteCallCount);
+
+            release.SetResult(new DownloadBatchResult
+            {
+                Results =
+                [
+                    new DownloadResult
+                    {
+                        WorkshopId = "900",
+                        Status = OperationStatus.Succeeded,
+                        ContentPath = "C:\\Mods\\900",
+                    },
+                ],
+            });
+            await queueRun;
+            Assert.True(fixture.ViewModel.CanModifySelectedMod);
+        });
+    }
+
     private static IReadOnlyList<ModRecord> CreateRecords(bool withPreviews = false) =>
     [
         CreateRecord("100", "Alpha", 100, remoteOffset: 1, downloadOffset: 3, withPreviews),
@@ -215,6 +433,25 @@ public sealed class MainWindowViewModelTests
         }
     }
 
+    private static DeleteResult DeleteResultFor(
+        string workshopId,
+        OperationStatus status,
+        bool filesRemoved = false,
+        bool recordRemoved = false,
+        bool canRetryPermanently = false,
+        bool requiresRescan = false,
+        string? error = null) => new()
+        {
+            WorkshopId = workshopId,
+            Status = status,
+            ContentPath = Path.Combine("C:\\Mods", workshopId),
+            FilesRemoved = filesRemoved,
+            RecordRemoved = recordRemoved,
+            CanRetryPermanently = canRetryPermanently,
+            RequiresRescan = requiresRescan,
+            Error = error,
+        };
+
     private sealed class MainWindowFixture : IDisposable
     {
         private readonly TemporaryDirectory temporaryDirectory;
@@ -223,12 +460,16 @@ public sealed class MainWindowViewModelTests
             TemporaryDirectory temporaryDirectory,
             SqliteModRepository repository,
             StubLibraryService library,
+            MainWindowModOperationService operations,
+            DownloadQueueViewModel downloadQueue,
             MainWindowViewModel viewModel,
             string libraryRoot)
         {
             this.temporaryDirectory = temporaryDirectory;
             Repository = repository;
             Library = library;
+            Operations = operations;
+            DownloadQueue = downloadQueue;
             ViewModel = viewModel;
             LibraryRoot = libraryRoot;
         }
@@ -236,6 +477,10 @@ public sealed class MainWindowViewModelTests
         public SqliteModRepository Repository { get; }
 
         public StubLibraryService Library { get; }
+
+        public MainWindowModOperationService Operations { get; }
+
+        public DownloadQueueViewModel DownloadQueue { get; }
 
         public MainWindowViewModel ViewModel { get; }
 
@@ -258,19 +503,139 @@ public sealed class MainWindowViewModelTests
                 RefreshLibraryOnStartup = refreshOnStartup,
             });
             var library = new StubLibraryService();
+            var operations = new MainWindowModOperationService();
+            var downloadQueue = new DownloadQueueViewModel(
+                settings,
+                new MainWindowWorkshopClient(),
+                operations);
             var viewModel = new MainWindowViewModel(
                 settings,
                 repository,
                 library,
-                preview ?? new StubPreviewImageService());
-            return new MainWindowFixture(temporaryDirectory, repository, library, viewModel, root);
+                preview ?? new StubPreviewImageService(),
+                operations,
+                downloadQueue);
+            return new MainWindowFixture(
+                temporaryDirectory,
+                repository,
+                library,
+                operations,
+                downloadQueue,
+                viewModel,
+                root);
         }
 
         public void Dispose()
         {
             ViewModel.Dispose();
+            DownloadQueue.Dispose();
             Repository.Dispose();
             temporaryDirectory.Dispose();
+        }
+    }
+
+    private sealed class MainWindowWorkshopClient : IWorkshopClient
+    {
+        public Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataBatchAsync(
+            IReadOnlyCollection<string> workshopIds,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyDictionary<string, WorkshopMetadata>>(
+                new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal));
+        }
+    }
+
+    private sealed class MainWindowModOperationService : IModOperationService
+    {
+        public Func<
+            IReadOnlyCollection<DownloadRequest>,
+            IProgress<OperationProgress>?,
+            CancellationToken,
+            Task<DownloadBatchResult>>? DownloadHandler
+        {
+            get;
+            set;
+        }
+
+        public Func<
+            string,
+            string,
+            bool,
+            IProgress<OperationProgress>?,
+            CancellationToken,
+            Task<DeleteResult>>? DeleteHandler
+        {
+            get;
+            set;
+        }
+
+        public int DeleteCallCount { get; private set; }
+
+        public int PermanentDeleteCallCount { get; private set; }
+
+        public int RedownloadCallCount { get; private set; }
+
+        public Task<DownloadBatchResult> DownloadBatchAsync(
+            IReadOnlyCollection<DownloadRequest> requests,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            DownloadHandler?.Invoke(requests, progress, cancellationToken)
+            ?? Task.FromResult(new DownloadBatchResult
+            {
+                Results = requests.Select(request => new DownloadResult
+                {
+                    WorkshopId = request.WorkshopId,
+                    Status = OperationStatus.Succeeded,
+                    ContentPath = Path.Combine(request.LibraryRoot, request.WorkshopId),
+                }).ToArray(),
+            });
+
+        public Task<IReadOnlyList<UpdateCheckResult>> CheckUpdatesAsync(
+            string libraryRoot,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<DownloadBatchResult> UpdateSelectedAsync(
+            string libraryRoot,
+            IReadOnlyCollection<string> workshopIds,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<DeleteResult> DeleteAsync(
+            string libraryRoot,
+            string workshopId,
+            bool permanently,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            DeleteCallCount++;
+            if (permanently)
+            {
+                PermanentDeleteCallCount++;
+            }
+
+            return DeleteHandler?.Invoke(
+                libraryRoot,
+                workshopId,
+                permanently,
+                progress,
+                cancellationToken)
+                ?? Task.FromResult(DeleteResultFor(workshopId, OperationStatus.Succeeded));
+        }
+
+        public Task<RedownloadResult> RedownloadAsync(
+            string libraryRoot,
+            string workshopId,
+            bool permanently,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            RedownloadCallCount++;
+            throw new InvalidOperationException("The main window must use the shared queue.");
         }
     }
 }

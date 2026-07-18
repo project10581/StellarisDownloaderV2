@@ -18,6 +18,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IModRepository modRepository;
     private readonly ILibraryService libraryService;
     private readonly IPreviewImageService previewImageService;
+    private readonly IModOperationService modOperationService;
+    private readonly DownloadQueueViewModel downloadQueue;
     private readonly ObservableCollection<ModListItemViewModel> items = [];
     private readonly AsyncRelayCommand refreshCommand;
     private readonly AsyncRelayCommand rescanCommand;
@@ -37,17 +39,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ISettingsStore settingsStore,
         IModRepository modRepository,
         ILibraryService libraryService,
-        IPreviewImageService previewImageService)
+        IPreviewImageService previewImageService,
+        IModOperationService modOperationService,
+        DownloadQueueViewModel downloadQueue)
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(modRepository);
         ArgumentNullException.ThrowIfNull(libraryService);
         ArgumentNullException.ThrowIfNull(previewImageService);
+        ArgumentNullException.ThrowIfNull(modOperationService);
+        ArgumentNullException.ThrowIfNull(downloadQueue);
 
         this.settingsStore = settingsStore;
         this.modRepository = modRepository;
         this.libraryService = libraryService;
         this.previewImageService = previewImageService;
+        this.modOperationService = modOperationService;
+        this.downloadQueue = downloadQueue;
+        downloadQueue.PropertyChanged += OnDownloadQueuePropertyChanged;
 
         ModsView = new ListCollectionView(items)
         {
@@ -97,6 +106,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             {
                 StartPreviewLoad(value);
                 OnPropertyChanged(nameof(HasSelection));
+                OnPropertyChanged(nameof(CanModifySelectedMod));
             }
         }
     }
@@ -121,6 +131,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref isBusy, value))
             {
                 OnPropertyChanged(nameof(CanRunWriteOperations));
+                OnPropertyChanged(nameof(CanModifySelectedMod));
                 refreshCommand.NotifyCanExecuteChanged();
                 rescanCommand.NotifyCanExecuteChanged();
             }
@@ -135,6 +146,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref canModifyLibrary, value))
             {
                 OnPropertyChanged(nameof(CanRunWriteOperations));
+                OnPropertyChanged(nameof(CanModifySelectedMod));
                 rescanCommand.NotifyCanExecuteChanged();
             }
         }
@@ -142,7 +154,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool HasSelection => SelectedMod is not null;
 
-    public bool CanRunWriteOperations => CanModifyLibrary && !IsBusy;
+    public bool CanRunWriteOperations => CanModifyLibrary && !IsBusy && !downloadQueue.IsBusy;
+
+    public bool CanModifySelectedMod => CanRunWriteOperations && HasSelection;
 
     public string? LastError
     {
@@ -169,6 +183,93 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         IsBusy = true;
+        try
+        {
+            await RefreshLibraryStateAsync(cancellationToken);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public Task<SelectedModDeletionResult> DeleteSelectedAsync(
+        bool permanently,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        DeleteSelectedCoreAsync(
+            permanently,
+            queueForRedownload: false,
+            progress,
+            cancellationToken);
+
+    public Task<SelectedModDeletionResult> DeleteAndQueueRedownloadAsync(
+        bool permanently,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        DeleteSelectedCoreAsync(
+            permanently,
+            queueForRedownload: true,
+            progress,
+            cancellationToken);
+
+    public async Task RescanAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanRescan() || libraryRoot is null)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        State = LibraryViewState.Loading;
+        LastError = null;
+        try
+        {
+            var junction = await libraryService.EnsureJunctionAsync(
+                libraryRoot,
+                cancellationToken: cancellationToken);
+            if (junction.Status != OperationStatus.Succeeded)
+            {
+                ClearItems();
+                CanModifyLibrary = false;
+                LastError = junction.Error;
+                State = LibraryViewState.Error;
+                return;
+            }
+
+            var result = await libraryService.ScanAsync(libraryRoot, cancellationToken: cancellationToken);
+            if (result.Status == OperationStatus.Succeeded)
+            {
+                ReplaceItems(result.Records);
+                CanModifyLibrary = true;
+                State = LibraryViewState.Ready;
+            }
+            else
+            {
+                ClearItems();
+                CanModifyLibrary = false;
+                LastError = result.Error;
+                State = LibraryViewState.Stale;
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        downloadQueue.PropertyChanged -= OnDownloadQueuePropertyChanged;
+        previewCancellation?.Cancel();
+        previewCancellation?.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private bool CanRescan() => !IsBusy && !downloadQueue.IsBusy && libraryRoot is not null;
+
+    private async Task RefreshLibraryStateAsync(CancellationToken cancellationToken)
+    {
         State = LibraryViewState.Loading;
         LastError = null;
         try
@@ -221,50 +322,97 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             LastError = exception.Message;
             State = LibraryViewState.Error;
         }
-        finally
-        {
-            IsBusy = false;
-        }
     }
 
-    public async Task RescanAsync(CancellationToken cancellationToken = default)
+    private async Task<SelectedModDeletionResult> DeleteSelectedCoreAsync(
+        bool permanently,
+        bool queueForRedownload,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken)
     {
-        if (!CanRescan() || libraryRoot is null)
+        if (!CanModifySelectedMod || libraryRoot is null || SelectedMod is null)
         {
-            return;
+            return SelectedModDeletionResult.Rejected(
+                "The selected mod cannot be changed while the library or download queue is busy, "
+                + "or while the library cache is unavailable.");
         }
 
+        var workshopId = SelectedMod.WorkshopId;
+        var currentLibraryRoot = libraryRoot;
         IsBusy = true;
-        State = LibraryViewState.Loading;
         LastError = null;
         try
         {
-            var junction = await libraryService.EnsureJunctionAsync(
-                libraryRoot,
-                cancellationToken: cancellationToken);
-            if (junction.Status != OperationStatus.Succeeded)
+            var deleteResult = await modOperationService.DeleteAsync(
+                currentLibraryRoot,
+                workshopId,
+                permanently,
+                progress,
+                cancellationToken);
+
+            if (deleteResult.RequiresRescan)
             {
+                await modRepository.MarkCacheStaleAsync(CancellationToken.None);
                 ClearItems();
                 CanModifyLibrary = false;
-                LastError = junction.Error;
-                State = LibraryViewState.Error;
-                return;
+                State = LibraryViewState.Stale;
+                LastError = BuildRescanRequiredError(deleteResult.Error);
             }
-
-            var result = await libraryService.ScanAsync(libraryRoot, cancellationToken: cancellationToken);
-            if (result.Status == OperationStatus.Succeeded)
+            else if (deleteResult.Status == OperationStatus.Succeeded || deleteResult.FilesRemoved)
             {
-                ReplaceItems(result.Records);
-                CanModifyLibrary = true;
-                State = LibraryViewState.Ready;
+                await RefreshLibraryStateAsync(cancellationToken);
             }
             else
             {
-                ClearItems();
-                CanModifyLibrary = false;
-                LastError = result.Error;
-                State = LibraryViewState.Stale;
+                LastError = deleteResult.Error;
             }
+
+            var queued = false;
+            string? actionError = deleteResult.Error;
+            if (queueForRedownload && deleteResult.Status == OperationStatus.Succeeded)
+            {
+                if (downloadQueue.IsBusy)
+                {
+                    actionError = "The mod was deleted, but the download queue started running "
+                        + "before it could be queued again.";
+                }
+                else
+                {
+                    downloadQueue.Remove([workshopId]);
+                    var enqueueResult = await downloadQueue.EnqueueAsync(workshopId, cancellationToken);
+                    queued = enqueueResult.AddedCount == 1;
+                    if (!queued)
+                    {
+                        actionError = "The mod was deleted, but it could not be added to the download queue.";
+                    }
+                }
+
+                if (actionError is not null)
+                {
+                    LastError = actionError;
+                }
+            }
+
+            return new SelectedModDeletionResult
+            {
+                Started = true,
+                DeleteResult = deleteResult,
+                QueuedForRedownload = queued,
+                Error = actionError,
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (IsOperationalFailure(exception))
+        {
+            LastError = exception.Message;
+            return new SelectedModDeletionResult
+            {
+                Started = true,
+                Error = exception.Message,
+            };
         }
         finally
         {
@@ -272,14 +420,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void Dispose()
+    private void OnDownloadQueuePropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
-        previewCancellation?.Cancel();
-        previewCancellation?.Dispose();
-        GC.SuppressFinalize(this);
+        if (args.PropertyName == nameof(DownloadQueueViewModel.IsBusy))
+        {
+            OnPropertyChanged(nameof(CanRunWriteOperations));
+            OnPropertyChanged(nameof(CanModifySelectedMod));
+            rescanCommand.NotifyCanExecuteChanged();
+        }
     }
 
-    private bool CanRescan() => !IsBusy && libraryRoot is not null;
+    private static string BuildRescanRequiredError(string? error) =>
+        $"{error ?? "The cache could not be updated after deleting the mod."} "
+        + "Rescan the mod library before performing another write operation.";
 
     private bool FilterMod(object candidate)
     {
