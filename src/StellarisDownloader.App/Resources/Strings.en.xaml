@@ -91,4 +91,23 @@
     <sys:String x:Key="Close.BusyTitle">Operation in progress</sys:String>
     <sys:String x:Key="Close.WaitForOperation">Wait for the current library operation to finish before closing.</sys:String>
     <sys:String x:Key="Close.CancelDownload">A download is running. Cancel it before closing?</sys:String>
+    <sys:String x:Key="Updates.Title">Mod updates</sys:String>
+    <sys:String x:Key="Updates.Check">Check for updates</sys:String>
+    <sys:String x:Key="Updates.SelectAllAvailable">Select all available updates</sys:String>
+    <sys:String x:Key="Updates.DownloadSelected">Download selected updates</sys:String>
+    <sys:String x:Key="Updates.Cancel">Cancel</sys:String>
+    <sys:String x:Key="Updates.Selected">Selected</sys:String>
+    <sys:String x:Key="Updates.Mod">Mod</sys:String>
+    <sys:String x:Key="Updates.WorkshopId">Workshop ID</sys:String>
+    <sys:String x:Key="Updates.State">State</sys:String>
+    <sys:String x:Key="Updates.RemoteUpdated">Remote updated</sys:String>
+    <sys:String x:Key="Updates.Approximate">Approximate local time</sys:String>
+    <sys:String x:Key="Updates.Error">Failure reason</sys:String>
+    <sys:String x:Key="Delete.ConfirmTitle">Confirm mod deletion</sys:String>
+    <sys:String x:Key="Delete.ConfirmMessage">Send “{0}” ({1}) to the Recycle Bin?</sys:String>
+    <sys:String x:Key="Delete.RedownloadConfirmMessage">Send “{0}” ({1}) to the Recycle Bin and add it to the shared download queue?</sys:String>
+    <sys:String x:Key="Delete.PermanentConfirmMessage">The Recycle Bin operation failed. Permanently delete “{0}” ({1})? This cannot be undone.</sys:String>
+    <sys:String x:Key="Delete.ErrorTitle">Mod operation failed</sys:String>
+    <sys:String x:Key="Delete.RescanRequired">The files changed but the cache could not be updated. Rescan the mod library before another write operation.</sys:String>
+    <sys:String x:Key="Open.ErrorTitle">Could not open item</sys:String>
 </ResourceDictionary>

@@ -36,6 +36,10 @@
                     IsEnabled="{Binding CanRunWriteOperations}"
                     Click="BrowseWorkshopButton_Click" />
             <Button Style="{StaticResource ToolbarButton}"
+                    Content="{DynamicResource Command.CheckUpdates}"
+                    IsEnabled="{Binding CanRunWriteOperations}"
+                    Click="CheckUpdatesButton_Click" />
+            <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Refresh}"
                     Command="{Binding RefreshCommand}" />
             <Button Style="{StaticResource ToolbarButton}"
@@ -198,6 +202,29 @@
                                        Text="{DynamicResource Detail.Description}" />
                             <TextBlock Text="{Binding Record.Description, TargetNullValue=—}"
                                        TextWrapping="Wrap" />
+
+                            <WrapPanel Margin="0,18,0,0">
+                                <Button Content="{DynamicResource Command.OpenFolder}"
+                                        IsEnabled="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Click="OpenSelectedFolder_Click"
+                                        Padding="10,6"
+                                        Margin="0,0,8,8" />
+                                <Button Content="{DynamicResource Command.OpenWorkshop}"
+                                        IsEnabled="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Click="OpenSelectedWorkshop_Click"
+                                        Padding="10,6"
+                                        Margin="0,0,8,8" />
+                                <Button Content="{DynamicResource Command.Delete}"
+                                        IsEnabled="{Binding DataContext.CanModifySelectedMod, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Click="DeleteSelected_Click"
+                                        Padding="10,6"
+                                        Margin="0,0,8,8" />
+                                <Button Content="{DynamicResource Command.Redownload}"
+                                        IsEnabled="{Binding DataContext.CanModifySelectedMod, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Click="RedownloadSelected_Click"
+                                        Padding="10,6"
+                                        Margin="0,0,8,8" />
+                            </WrapPanel>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
@@ -245,14 +272,42 @@
                         </ComboBox>
                     </StackPanel>
 
-                    <ListBox Grid.Row="1"
+                    <ListBox x:Name="ModList"
+                             Grid.Row="1"
                              ItemsSource="{Binding ModsView}"
                              SelectedItem="{Binding SelectedMod}"
+                             PreviewMouseRightButtonDown="ModList_PreviewMouseRightButtonDown"
                              VirtualizingPanel.IsVirtualizing="True"
                              VirtualizingPanel.VirtualizationMode="Recycling"
                              ScrollViewer.CanContentScroll="True"
                              BorderBrush="#22000000"
                              BorderThickness="1">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="ContextMenu">
+                                    <Setter.Value>
+                                        <ContextMenu>
+                                            <MenuItem Header="{DynamicResource Command.Refresh}"
+                                                      Click="RefreshMenuItem_Click" />
+                                            <MenuItem Header="{DynamicResource Command.Rescan}"
+                                                      Click="RescanMenuItem_Click" />
+                                            <Separator />
+                                            <MenuItem Header="{DynamicResource Command.OpenFolder}"
+                                                      Click="OpenSelectedFolder_Click" />
+                                            <MenuItem Header="{DynamicResource Command.OpenWorkshop}"
+                                                      Click="OpenSelectedWorkshop_Click" />
+                                            <Separator />
+                                            <MenuItem Header="{DynamicResource Command.Delete}"
+                                                      Click="DeleteSelected_Click" />
+                                            <MenuItem Header="{DynamicResource Command.Redownload}"
+                                                      Click="RedownloadSelected_Click" />
+                                            <MenuItem Header="{DynamicResource Command.CheckUpdates}"
+                                                      Click="CheckUpdatesButton_Click" />
+                                        </ContextMenu>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type viewModels:ModListItemViewModel}">
                                 <TextBlock Text="{Binding DisplayTitle}"

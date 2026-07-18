@@ -108,13 +108,18 @@ public partial class App : Application, IDisposable
                 settingsStore,
                 modRepository,
                 libraryService,
-                new PreviewImageService(httpClient));
+                new PreviewImageService(httpClient),
+                modOperationService,
+                downloadQueueViewModel);
             var mainWindow = new MainWindow(
                 viewModel,
                 downloadQueueViewModel,
                 CreateRegularSettingsWindowAsync,
                 () => new DownloadQueueWindow(downloadQueueViewModel),
-                () => new WorkshopBrowserWindow(downloadQueueViewModel));
+                () => new WorkshopBrowserWindow(downloadQueueViewModel),
+                () => new UpdateSelectionWindow(new UpdateSelectionViewModel(
+                    settingsStore,
+                    modOperationService)));
             MainWindow = mainWindow;
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;

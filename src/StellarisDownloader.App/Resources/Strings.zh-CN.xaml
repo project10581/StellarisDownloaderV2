@@ -91,4 +91,23 @@
     <sys:String x:Key="Close.BusyTitle">操作正在进行</sys:String>
     <sys:String x:Key="Close.WaitForOperation">请等待当前模组库操作完成后再关闭程序。</sys:String>
     <sys:String x:Key="Close.CancelDownload">下载正在进行。是否先请求取消下载？</sys:String>
+    <sys:String x:Key="Updates.Title">模组更新</sys:String>
+    <sys:String x:Key="Updates.Check">检查更新</sys:String>
+    <sys:String x:Key="Updates.SelectAllAvailable">全选可更新项</sys:String>
+    <sys:String x:Key="Updates.DownloadSelected">下载所选更新</sys:String>
+    <sys:String x:Key="Updates.Cancel">取消</sys:String>
+    <sys:String x:Key="Updates.Selected">选择</sys:String>
+    <sys:String x:Key="Updates.Mod">模组</sys:String>
+    <sys:String x:Key="Updates.WorkshopId">Workshop ID</sys:String>
+    <sys:String x:Key="Updates.State">状态</sys:String>
+    <sys:String x:Key="Updates.RemoteUpdated">远程更新时间</sys:String>
+    <sys:String x:Key="Updates.Approximate">本地时间为近似值</sys:String>
+    <sys:String x:Key="Updates.Error">失败原因</sys:String>
+    <sys:String x:Key="Delete.ConfirmTitle">确认删除模组</sys:String>
+    <sys:String x:Key="Delete.ConfirmMessage">是否将“{0}”（{1}）发送到回收站？</sys:String>
+    <sys:String x:Key="Delete.RedownloadConfirmMessage">是否将“{0}”（{1}）发送到回收站，并加入共享下载队列？</sys:String>
+    <sys:String x:Key="Delete.PermanentConfirmMessage">回收站操作失败。是否永久删除“{0}”（{1}）？此操作无法撤销。</sys:String>
+    <sys:String x:Key="Delete.ErrorTitle">模组操作失败</sys:String>
+    <sys:String x:Key="Delete.RescanRequired">文件已经变化，但缓存更新失败。请在执行其他写操作前重新扫描模组库。</sys:String>
+    <sys:String x:Key="Open.ErrorTitle">无法打开项目</sys:String>
 </ResourceDictionary>
