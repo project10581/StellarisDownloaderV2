@@ -15,7 +15,9 @@ public partial class App : Application, IDisposable
     private JsonSettingsStore? settingsStore;
     private SqliteModRepository? modRepository;
     private WriteOperationCoordinator? writeCoordinator;
-    private HttpClient? previewHttpClient;
+    private HttpClient? httpClient;
+    private SteamCmdService? steamCmdService;
+    private DownloadQueueViewModel? downloadQueueViewModel;
     private bool disposed;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -43,10 +45,11 @@ public partial class App : Application, IDisposable
                 "workshop",
                 "content",
                 "281990");
+            var junctionManager = new WindowsJunctionManager();
             var libraryService = new LibraryService(
                 settingsStore,
                 modRepository,
-                new WindowsJunctionManager(),
+                junctionManager,
                 writeCoordinator,
                 junctionPath);
 
@@ -83,13 +86,35 @@ public partial class App : Application, IDisposable
                 return CreateSettingsWindow(currentSettings, isInitialization: false);
             }
 
-            previewHttpClient = new HttpClient();
+            httpClient = new HttpClient();
+            var workshopClient = new WorkshopClient(httpClient);
+            steamCmdService = new SteamCmdService(
+                httpClient,
+                new ProcessRunner(),
+                paths.SteamCmdDirectory);
+            var modOperationService = new ModOperationService(
+                modRepository,
+                steamCmdService,
+                workshopClient,
+                junctionManager,
+                new WindowsFileDeletionService(),
+                writeCoordinator,
+                junctionPath);
+            downloadQueueViewModel = new DownloadQueueViewModel(
+                settingsStore,
+                workshopClient,
+                modOperationService);
             var viewModel = new MainWindowViewModel(
                 settingsStore,
                 modRepository,
                 libraryService,
-                new PreviewImageService(previewHttpClient));
-            var mainWindow = new MainWindow(viewModel, CreateRegularSettingsWindowAsync);
+                new PreviewImageService(httpClient));
+            var mainWindow = new MainWindow(
+                viewModel,
+                downloadQueueViewModel,
+                CreateRegularSettingsWindowAsync,
+                () => new DownloadQueueWindow(downloadQueueViewModel),
+                () => new WorkshopBrowserWindow(downloadQueueViewModel));
             MainWindow = mainWindow;
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -120,11 +145,15 @@ public partial class App : Application, IDisposable
         }
 
         disposed = true;
-        previewHttpClient?.Dispose();
+        downloadQueueViewModel?.Dispose();
+        steamCmdService?.Dispose();
+        httpClient?.Dispose();
         writeCoordinator?.Dispose();
         modRepository?.Dispose();
         settingsStore?.Dispose();
-        previewHttpClient = null;
+        downloadQueueViewModel = null;
+        steamCmdService = null;
+        httpClient = null;
         writeCoordinator = null;
         modRepository = null;
         settingsStore = null;

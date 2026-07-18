@@ -28,6 +28,14 @@
                     Content="{DynamicResource Command.Settings}"
                     Click="SettingsButton_Click" />
             <Button Style="{StaticResource ToolbarButton}"
+                    Content="{DynamicResource Command.DownloadMods}"
+                    IsEnabled="{Binding CanRunWriteOperations}"
+                    Click="DownloadModsButton_Click" />
+            <Button Style="{StaticResource ToolbarButton}"
+                    Content="{DynamicResource Command.BrowseWorkshop}"
+                    IsEnabled="{Binding CanRunWriteOperations}"
+                    Click="BrowseWorkshopButton_Click" />
+            <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Refresh}"
                     Command="{Binding RefreshCommand}" />
             <Button Style="{StaticResource ToolbarButton}"
