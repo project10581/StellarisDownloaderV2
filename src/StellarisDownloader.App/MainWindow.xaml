@@ -108,12 +108,15 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <TextBlock Text="{Binding LastError, TargetNullValue={DynamicResource Status.Error}}"
-                           Foreground="Firebrick">
+                <TextBlock Foreground="Firebrick">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding LastError}" />
                             <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
+                                <DataTrigger Binding="{Binding LastError}" Value="{x:Null}">
+                                    <Setter Property="Text" Value="{DynamicResource Status.Error}" />
+                                </DataTrigger>
                                 <DataTrigger Binding="{Binding State}"
                                              Value="{x:Static viewModels:LibraryViewState.Error}">
                                     <Setter Property="Visibility" Value="Visible" />
