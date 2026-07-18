@@ -214,3 +214,23 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 - 多行 ID/URL 输入、下载队列窗口和 WebView2 浏览器仍属于批次 5。
 - 设置中的“启动检查模组更新”和“启动检查应用更新”字段已完整保存；对应 UI 编排分别随批次 5 更新选择流程和批次 6 Velopack 接入完成。
 - Windows 桌面自动化启动授权超时，未进行自动点击；已通过 XAML 编译、ViewModel/资源测试和无交互进程存活检查，最终视觉与交互仍列入人工验收。
+
+## 14. 批次 5 实现状态
+
+已完成：
+
+- `DL-01`、`DL-02`、`DL-03`、`DL-04`：输入解析只接受 ASCII 纯数字 ID，或可信 `steamcommunity.com` HTTP/HTTPS URL 中唯一的数字 `id` 参数；多行有效项保序去重，无效项逐行报告且不阻止其他项。应用组合根只创建一个会话级 `DownloadQueueViewModel`，ID/URL 窗口、浏览器和主窗口删除后重下入口均引用同一实例；队列顺序执行，显示真实阶段、完成数/总数、滚动日志及成功/失败/取消计数，支持取消、保留失败项、重新入队、空闲时移除和清空。
+- `WEB-01`、`WEB-02`、`WEB-03`：使用系统共享的 Evergreen WebView2 Runtime；Runtime 缺失时显示微软获取入口，不把固定 Runtime 打入应用。浏览器保留后退、前进、刷新、当前标题、只读 URL、当前详情项加入队列和 Workshop 卡片加入体验；注入逻辑是独立 `WorkshopBridge.js` 嵌入资源，不是超长 C# 字符串。
+- `WEB-04`、`WEB-05`：WebView 内只允许可信 HTTPS Steam Community 主机及真实子域；其他 HTTP/HTTPS 链接交给系统浏览器，非 Web 协议拒绝。消息桥只接受来源与当前顶层文档一致的固定 JSON：根对象只能含 `type` 和 `ids`，类型必须为 `enqueueWorkshopIds`，原始数组在去重前限制 1–100 项且每项必须是 ASCII 数字字符串；未知、缺失、重复属性、伪域、userinfo、HTTP、非字符串和畸形 JSON 全部拒绝。
+- `WEB-06`：卡片“已安装”状态只有在当前设置已初始化、缓存状态为 `Valid`，且记录路径精确为当前根目录的数字直接子目录、目录真实存在、非空且非 reparse point 时才成立；远程元数据或旧缓存不能单独决定本地存在。卡片同时同步“已在共享队列”状态。
+- `UI-07`、`DEL-02`、`DEL-03`：主窗口详情区和列表右键菜单接入打开文件夹、打开 Workshop、删除、删除后重新入队、检查更新、刷新和重扫。删除默认进入回收站；失败后只有再次明确确认才永久删除。文件已变更但数据库失败时缓存进入 stale 并要求重扫。删除后重下不调用隐藏的 `RedownloadAsync`，而是移除同 ID 的旧终态队列项并重新加入唯一共享队列。
+- `UPD-03`：更新窗口显示标题、ID、检查状态、远程时间、近似本地时间标识和失败原因；默认只勾选 `UpdateAvailable`，全选只是同一 `UpdateSelectedAsync` 流程的选择动作。下载所选更新支持真实进度、取消和逐项结果。启动选项启用时，在 junction 修复和必要重扫之后执行模组更新检查；全部最新时保持静默。
+- 写操作期间主窗口危险命令和重扫会同步禁用；关闭时若库操作仍在进行则要求等待，若下载队列运行则只允许请求取消后再关闭，不会直接释放正在使用的服务。
+
+验证证据：`WorkshopIdParserTests`、`DownloadQueueViewModelTests`、`SteamCommunitySecurityPolicyTests`、`WorkshopWebMessageValidatorTests`、`WorkshopBridgeScriptLoaderTests`、`InstalledWorkshopStateProviderTests`、`UpdateSelectionViewModelTests` 与扩展后的 `MainWindowViewModelTests` 覆盖解析攻击面、跨入口同实例、队列去重/取消/重试、UI 线程集合更新、导航与消息来源、磁盘事实、更新选择、部分删除失败和共享重下。批次完成时运行原始 CI 命令 `dotnet restore`、`dotnet format --verify-no-changes`、`dotnet build -c Release`、`dotnet test -c Release`，共 192 项测试通过，Release 为 0 警告、0 错误。WPF 可执行文件隐藏启动 3 秒保持存活。
+
+已知限制与后续批次边界：
+
+- 普通自动测试不访问真实 SteamCMD、Workshop API 或 Steam Community 页面；这些入口使用 HTTP、进程、文件系统和安全策略替身。真实联网下载、Steam 页面 DOM 兼容性、WebView2 交互和回收站恢复仍列入人工验收。
+- Steam Community 页面结构可能变化；独立脚本使用受限选择器和 MutationObserver，页面变化不会扩大本地桥权限，但可能需要维护卡片选择器。
+- `APPUP-01` 至 `APPUP-03`、Serilog、`win-x64` self-contained publish、Velopack Portable ZIP/feed、发行工作流和签名占位属于批次 6，尚未接入。
