@@ -11,7 +11,8 @@
     <sys:String x:Key="Command.OpenWorkshop">Open Workshop page</sys:String>
     <sys:String x:Key="Command.Delete">Delete mod</sys:String>
     <sys:String x:Key="Command.Redownload">Delete and redownload</sys:String>
-    <sys:String x:Key="Command.CheckUpdates">Check for updates</sys:String>
+    <sys:String x:Key="Command.CheckModUpdates">Check mod updates</sys:String>
+    <sys:String x:Key="Command.CheckAppUpdates">Check application update</sys:String>
     <sys:String x:Key="Command.DownloadUpdates">Download selected updates</sys:String>
     <sys:String x:Key="Search.Label">Search title or Workshop ID</sys:String>
     <sys:String x:Key="Sort.Label">Sort by</sys:String>
@@ -103,6 +104,15 @@
     <sys:String x:Key="Updates.RemoteUpdated">Remote updated</sys:String>
     <sys:String x:Key="Updates.Approximate">Approximate local time</sys:String>
     <sys:String x:Key="Updates.Error">Failure reason</sys:String>
+    <sys:String x:Key="AppUpdates.Title">Application update</sys:String>
+    <sys:String x:Key="AppUpdates.CurrentVersion">Current version</sys:String>
+    <sys:String x:Key="AppUpdates.LatestVersion">Latest version</sys:String>
+    <sys:String x:Key="AppUpdates.ReleaseNotes">Release notes</sys:String>
+    <sys:String x:Key="AppUpdates.Check">Check again</sys:String>
+    <sys:String x:Key="AppUpdates.Download">Download update</sys:String>
+    <sys:String x:Key="AppUpdates.Cancel">Cancel</sys:String>
+    <sys:String x:Key="AppUpdates.RestartNow">Restart and update now</sys:String>
+    <sys:String x:Key="AppUpdates.Later">Later</sys:String>
     <sys:String x:Key="Delete.ConfirmTitle">Confirm mod deletion</sys:String>
     <sys:String x:Key="Delete.ConfirmMessage">Send “{0}” ({1}) to the Recycle Bin?</sys:String>
     <sys:String x:Key="Delete.RedownloadConfirmMessage">Send “{0}” ({1}) to the Recycle Bin and add it to the shared download queue?</sys:String>

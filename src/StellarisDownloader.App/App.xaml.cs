@@ -19,6 +19,8 @@ public partial class App : Application, IDisposable
     private HttpClient? httpClient;
     private SteamCmdService? steamCmdService;
     private DownloadQueueViewModel? downloadQueueViewModel;
+    private AppUpdateService? appUpdateService;
+    private ApplicationUpdateViewModel? applicationUpdateViewModel;
     private bool disposed;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -106,6 +108,7 @@ public partial class App : Application, IDisposable
                 settingsStore,
                 workshopClient,
                 modOperationService);
+            appUpdateService = new AppUpdateService();
             var installedStateProvider = new InstalledWorkshopStateProvider(
                 settingsStore,
                 modRepository);
@@ -119,15 +122,41 @@ public partial class App : Application, IDisposable
             UpdateSelectionWindow CreateUpdateWindow() =>
                 new(new UpdateSelectionViewModel(settingsStore, modOperationService));
 
-            var mainWindow = new MainWindow(
+            MainWindow? mainWindow = null;
+            Task PrepareForAppUpdateRestartAsync()
+            {
+                return Dispatcher.InvokeAsync(() =>
+                {
+                    if (writeCoordinator.IsBusy)
+                    {
+                        throw new InvalidOperationException(
+                            "Wait for the active write operation before applying the update.");
+                    }
+
+                    (mainWindow ?? throw new InvalidOperationException(
+                        "The main window is not available for update preparation."))
+                        .PrepareForAppUpdateRestart();
+                    Log.Information("Restarting to apply an application update.");
+                }).Task;
+            }
+
+            applicationUpdateViewModel = new ApplicationUpdateViewModel(
+                appUpdateService,
+                PrepareForAppUpdateRestartAsync);
+            ApplicationUpdateWindow CreateApplicationUpdateWindow() =>
+                new(applicationUpdateViewModel, disposeViewModel: false);
+
+            mainWindow = new MainWindow(
                 viewModel,
                 downloadQueueViewModel,
+                applicationUpdateViewModel,
                 CreateRegularSettingsWindowAsync,
                 () => new DownloadQueueWindow(downloadQueueViewModel),
                 () => new WorkshopBrowserWindow(
                     downloadQueueViewModel,
                     installedStateProvider),
-                CreateUpdateWindow);
+                CreateUpdateWindow,
+                CreateApplicationUpdateWindow);
             MainWindow = mainWindow;
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -153,6 +182,31 @@ public partial class App : Application, IDisposable
                 else
                 {
                     startupUpdates.Dispose();
+                }
+            }
+
+            startupSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
+            if (startupSettings.Settings.CheckAppUpdatesOnStartup)
+            {
+                try
+                {
+                    await applicationUpdateViewModel.CheckAsync().ConfigureAwait(true);
+                    if (!string.IsNullOrWhiteSpace(applicationUpdateViewModel.LastError))
+                    {
+                        Log.Warning(
+                            "Automatic application update check failed: {Error}",
+                            applicationUpdateViewModel.LastError);
+                    }
+                    else if (applicationUpdateViewModel.IsUpdateAvailable)
+                    {
+                        var applicationUpdateWindow = CreateApplicationUpdateWindow();
+                        applicationUpdateWindow.Owner = mainWindow;
+                        applicationUpdateWindow.ShowDialog();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Log.Warning(exception, "Automatic application update check failed.");
                 }
             }
         }
@@ -183,12 +237,16 @@ public partial class App : Application, IDisposable
         }
 
         disposed = true;
+        applicationUpdateViewModel?.Dispose();
+        appUpdateService?.Dispose();
         downloadQueueViewModel?.Dispose();
         steamCmdService?.Dispose();
         httpClient?.Dispose();
         writeCoordinator?.Dispose();
         modRepository?.Dispose();
         settingsStore?.Dispose();
+        applicationUpdateViewModel = null;
+        appUpdateService = null;
         downloadQueueViewModel = null;
         steamCmdService = null;
         httpClient = null;

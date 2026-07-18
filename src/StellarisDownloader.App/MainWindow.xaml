@@ -23,7 +23,7 @@
     </Window.Resources>
 
     <DockPanel Margin="16">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,12">
             <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Settings}"
                     Click="SettingsButton_Click" />
@@ -36,16 +36,19 @@
                     IsEnabled="{Binding CanRunWriteOperations}"
                     Click="BrowseWorkshopButton_Click" />
             <Button Style="{StaticResource ToolbarButton}"
-                    Content="{DynamicResource Command.CheckUpdates}"
+                    Content="{DynamicResource Command.CheckModUpdates}"
                     IsEnabled="{Binding CanRunWriteOperations}"
                     Click="CheckUpdatesButton_Click" />
+            <Button Style="{StaticResource ToolbarButton}"
+                    Content="{DynamicResource Command.CheckAppUpdates}"
+                    Click="CheckAppUpdatesButton_Click" />
             <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Refresh}"
                     Command="{Binding RefreshCommand}" />
             <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Rescan}"
                     Command="{Binding RescanCommand}" />
-        </StackPanel>
+        </WrapPanel>
 
         <Border DockPanel.Dock="Bottom"
                 Margin="0,12,0,0"
@@ -301,7 +304,7 @@
                                                       Click="DeleteSelected_Click" />
                                             <MenuItem Header="{DynamicResource Command.Redownload}"
                                                       Click="RedownloadSelected_Click" />
-                                            <MenuItem Header="{DynamicResource Command.CheckUpdates}"
+                                            <MenuItem Header="{DynamicResource Command.CheckModUpdates}"
                                                       Click="CheckUpdatesButton_Click" />
                                         </ContextMenu>
                                     </Setter.Value>

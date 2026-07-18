@@ -11,7 +11,8 @@
     <sys:String x:Key="Command.OpenWorkshop">打开创意工坊页面</sys:String>
     <sys:String x:Key="Command.Delete">删除模组</sys:String>
     <sys:String x:Key="Command.Redownload">删除并重新下载</sys:String>
-    <sys:String x:Key="Command.CheckUpdates">检查更新</sys:String>
+    <sys:String x:Key="Command.CheckModUpdates">检查模组更新</sys:String>
+    <sys:String x:Key="Command.CheckAppUpdates">检查应用更新</sys:String>
     <sys:String x:Key="Command.DownloadUpdates">下载所选更新</sys:String>
     <sys:String x:Key="Search.Label">搜索标题或 Workshop ID</sys:String>
     <sys:String x:Key="Sort.Label">排序方式</sys:String>
@@ -103,6 +104,15 @@
     <sys:String x:Key="Updates.RemoteUpdated">远程更新时间</sys:String>
     <sys:String x:Key="Updates.Approximate">本地时间为近似值</sys:String>
     <sys:String x:Key="Updates.Error">失败原因</sys:String>
+    <sys:String x:Key="AppUpdates.Title">应用更新</sys:String>
+    <sys:String x:Key="AppUpdates.CurrentVersion">当前版本</sys:String>
+    <sys:String x:Key="AppUpdates.LatestVersion">最新版本</sys:String>
+    <sys:String x:Key="AppUpdates.ReleaseNotes">发行说明</sys:String>
+    <sys:String x:Key="AppUpdates.Check">再次检查</sys:String>
+    <sys:String x:Key="AppUpdates.Download">下载更新</sys:String>
+    <sys:String x:Key="AppUpdates.Cancel">取消</sys:String>
+    <sys:String x:Key="AppUpdates.RestartNow">立即重启并更新</sys:String>
+    <sys:String x:Key="AppUpdates.Later">稍后</sys:String>
     <sys:String x:Key="Delete.ConfirmTitle">确认删除模组</sys:String>
     <sys:String x:Key="Delete.ConfirmMessage">是否将“{0}”（{1}）发送到回收站？</sys:String>
     <sys:String x:Key="Delete.RedownloadConfirmMessage">是否将“{0}”（{1}）发送到回收站，并加入共享下载队列？</sys:String>

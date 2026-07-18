@@ -14,34 +14,42 @@ public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel viewModel;
     private readonly DownloadQueueViewModel downloadQueueViewModel;
+    private readonly ApplicationUpdateViewModel applicationUpdateViewModel;
     private readonly Func<Task<SettingsWindow>> settingsWindowFactory;
     private readonly Func<DownloadQueueWindow> downloadWindowFactory;
     private readonly Func<WorkshopBrowserWindow> browserWindowFactory;
     private readonly Func<UpdateSelectionWindow> updateWindowFactory;
+    private readonly Func<ApplicationUpdateWindow> applicationUpdateWindowFactory;
     private DownloadQueueWindow? downloadWindow;
     private WorkshopBrowserWindow? browserWindow;
 
     public MainWindow(
         MainWindowViewModel viewModel,
         DownloadQueueViewModel downloadQueueViewModel,
+        ApplicationUpdateViewModel applicationUpdateViewModel,
         Func<Task<SettingsWindow>> settingsWindowFactory,
         Func<DownloadQueueWindow> downloadWindowFactory,
         Func<WorkshopBrowserWindow> browserWindowFactory,
-        Func<UpdateSelectionWindow> updateWindowFactory)
+        Func<UpdateSelectionWindow> updateWindowFactory,
+        Func<ApplicationUpdateWindow> applicationUpdateWindowFactory)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(downloadQueueViewModel);
+        ArgumentNullException.ThrowIfNull(applicationUpdateViewModel);
         ArgumentNullException.ThrowIfNull(settingsWindowFactory);
         ArgumentNullException.ThrowIfNull(downloadWindowFactory);
         ArgumentNullException.ThrowIfNull(browserWindowFactory);
         ArgumentNullException.ThrowIfNull(updateWindowFactory);
+        ArgumentNullException.ThrowIfNull(applicationUpdateWindowFactory);
         InitializeComponent();
         this.viewModel = viewModel;
         this.downloadQueueViewModel = downloadQueueViewModel;
+        this.applicationUpdateViewModel = applicationUpdateViewModel;
         this.settingsWindowFactory = settingsWindowFactory;
         this.downloadWindowFactory = downloadWindowFactory;
         this.browserWindowFactory = browserWindowFactory;
         this.updateWindowFactory = updateWindowFactory;
+        this.applicationUpdateWindowFactory = applicationUpdateWindowFactory;
         DataContext = viewModel;
     }
 
@@ -239,6 +247,25 @@ public partial class MainWindow : Window
         await viewModel.RefreshAsync().ConfigureAwait(true);
     }
 
+    private void CheckAppUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var window = applicationUpdateWindowFactory();
+        window.Owner = this;
+        window.ShowDialog();
+    }
+
+    public void PrepareForAppUpdateRestart()
+    {
+        if (viewModel.IsBusy || downloadQueueViewModel.IsBusy)
+        {
+            throw new InvalidOperationException(
+                "Wait for the active mod operation before applying the application update.");
+        }
+
+        browserWindow?.Close();
+        downloadWindow?.Close();
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         viewModel.Dispose();
@@ -247,6 +274,13 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        if (applicationUpdateViewModel.IsBusy)
+        {
+            applicationUpdateViewModel.Cancel();
+            e.Cancel = true;
+            return;
+        }
+
         if (viewModel.IsBusy)
         {
             e.Cancel = true;
