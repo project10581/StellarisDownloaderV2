@@ -65,7 +65,41 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
         Assert.False(fixture.ViewModel.CanModifyLibrary);
         Assert.False(fixture.ViewModel.CanRunWriteOperations);
-        Assert.False(fixture.ViewModel.RescanCommand.CanExecute(null));
+        Assert.True(fixture.ViewModel.RescanCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task JunctionRepairFailurePreventsRowsAndDangerousOperations()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+        fixture.Library.JunctionResult = new JunctionEnsureResult(
+            OperationStatus.Failed,
+            "junction",
+            fixture.LibraryRoot,
+            Changed: false,
+            "Junction repair failed.");
+
+        await fixture.ViewModel.RefreshAsync();
+
+        Assert.Equal(LibraryViewState.Error, fixture.ViewModel.State);
+        Assert.Equal("Junction repair failed.", fixture.ViewModel.LastError);
+        Assert.Empty(VisibleItems(fixture.ViewModel));
+        Assert.False(fixture.ViewModel.CanRunWriteOperations);
+        Assert.True(fixture.ViewModel.RescanCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task StartupRefreshEnsuresJunctionBeforeScanning()
+    {
+        using var fixture = await MainWindowFixture.CreateAsync(
+            CreateRecords(),
+            refreshOnStartup: true);
+
+        await fixture.ViewModel.InitializeAsync();
+
+        Assert.Equal(2, fixture.Library.EnsureJunctionCount);
+        Assert.Equal(1, fixture.Library.ScanCount);
+        Assert.Equal(LibraryViewState.Ready, fixture.ViewModel.State);
     }
 
     [Fact]
@@ -209,7 +243,8 @@ public sealed class MainWindowViewModelTests
 
         public static async Task<MainWindowFixture> CreateAsync(
             IReadOnlyCollection<ModRecord> records,
-            StubPreviewImageService? preview = null)
+            StubPreviewImageService? preview = null,
+            bool refreshOnStartup = false)
         {
             var temporaryDirectory = new TemporaryDirectory();
             var root = temporaryDirectory.GetPath("library");
@@ -217,7 +252,11 @@ public sealed class MainWindowViewModelTests
             var repository = new SqliteModRepository(temporaryDirectory.GetPath("library.db"));
             await repository.InitializeAsync();
             await repository.ReplaceSnapshotAsync(root, records, TestTime);
-            var settings = new StubSettingsStore(new AppSettings { LibraryRoot = root });
+            var settings = new StubSettingsStore(new AppSettings
+            {
+                LibraryRoot = root,
+                RefreshLibraryOnStartup = refreshOnStartup,
+            });
             var library = new StubLibraryService();
             var viewModel = new MainWindowViewModel(
                 settings,

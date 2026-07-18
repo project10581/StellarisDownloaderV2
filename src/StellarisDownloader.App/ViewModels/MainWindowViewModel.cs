@@ -30,6 +30,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private LibraryViewState state = LibraryViewState.Loading;
     private bool isBusy;
     private bool canModifyLibrary;
+    private bool refreshLibraryOnStartup;
     private string? lastError;
 
     public MainWindowViewModel(
@@ -149,8 +150,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref lastError, value);
     }
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
-        RefreshAsync(cancellationToken);
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await RefreshAsync(cancellationToken);
+        if (refreshLibraryOnStartup
+            && libraryRoot is not null
+            && State is LibraryViewState.Ready or LibraryViewState.Stale)
+        {
+            await RescanAsync(cancellationToken);
+        }
+    }
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
@@ -166,11 +175,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             var settings = await settingsStore.LoadAsync(cancellationToken);
             libraryRoot = settings.Settings.LibraryRoot;
+            refreshLibraryOnStartup = settings.Settings.RefreshLibraryOnStartup;
             if (settings.RequiresInitialization || string.IsNullOrWhiteSpace(libraryRoot))
             {
                 ClearItems();
                 CanModifyLibrary = false;
                 State = LibraryViewState.NoLibrary;
+                return;
+            }
+
+            var junction = await libraryService.EnsureJunctionAsync(
+                libraryRoot,
+                cancellationToken: cancellationToken);
+            if (junction.Status != OperationStatus.Succeeded)
+            {
+                ClearItems();
+                CanModifyLibrary = false;
+                LastError = junction.Error;
+                State = LibraryViewState.Error;
                 return;
             }
 
@@ -217,6 +239,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         LastError = null;
         try
         {
+            var junction = await libraryService.EnsureJunctionAsync(
+                libraryRoot,
+                cancellationToken: cancellationToken);
+            if (junction.Status != OperationStatus.Succeeded)
+            {
+                ClearItems();
+                CanModifyLibrary = false;
+                LastError = junction.Error;
+                State = LibraryViewState.Error;
+                return;
+            }
+
             var result = await libraryService.ScanAsync(libraryRoot, cancellationToken: cancellationToken);
             if (result.Status == OperationStatus.Succeeded)
             {
@@ -245,7 +279,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private bool CanRescan() => !IsBusy && CanModifyLibrary && libraryRoot is not null;
+    private bool CanRescan() => !IsBusy && libraryRoot is not null;
 
     private bool FilterMod(object candidate)
     {

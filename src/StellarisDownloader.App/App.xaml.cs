@@ -4,6 +4,7 @@ using System.Windows;
 using StellarisDownloader.App.Services;
 using StellarisDownloader.App.ViewModels;
 using StellarisDownloader.Core.Integrations;
+using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
 using StellarisDownloader.Core.Services;
 
@@ -20,6 +21,7 @@ public partial class App : Application, IDisposable
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         try
         {
@@ -48,15 +50,49 @@ public partial class App : Application, IDisposable
                 writeCoordinator,
                 junctionPath);
 
+            SettingsWindow CreateSettingsWindow(
+                SettingsLoadResult settingsResult,
+                bool isInitialization)
+            {
+                var settingsViewModel = new SettingsViewModel(
+                    settingsStore,
+                    libraryService,
+                    localizationService,
+                    writeCoordinator,
+                    settingsResult.Settings,
+                    isInitialization,
+                    settingsResult.CorruptBackupPath);
+                return new SettingsWindow(settingsViewModel);
+            }
+
+            if (loadedSettings.RequiresInitialization
+                || string.IsNullOrWhiteSpace(loadedSettings.Settings.LibraryRoot))
+            {
+                var setupWindow = CreateSettingsWindow(loadedSettings, isInitialization: true);
+                setupWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                if (setupWindow.ShowDialog() is not true)
+                {
+                    Shutdown();
+                    return;
+                }
+            }
+
+            async Task<SettingsWindow> CreateRegularSettingsWindowAsync()
+            {
+                var currentSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
+                return CreateSettingsWindow(currentSettings, isInitialization: false);
+            }
+
             previewHttpClient = new HttpClient();
             var viewModel = new MainWindowViewModel(
                 settingsStore,
                 modRepository,
                 libraryService,
                 new PreviewImageService(previewHttpClient));
-            var mainWindow = new MainWindow(viewModel);
+            var mainWindow = new MainWindow(viewModel, CreateRegularSettingsWindowAsync);
             MainWindow = mainWindow;
             mainWindow.Show();
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
             await viewModel.InitializeAsync().ConfigureAwait(true);
         }
         catch (Exception exception)

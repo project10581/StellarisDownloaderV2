@@ -14,6 +14,8 @@ internal sealed class StubSettingsStore : ISettingsStore
 
     public bool FailSave { get; set; }
 
+    public TaskCompletionSource<bool>? PendingSave { get; set; }
+
     public int SaveCount { get; private set; }
 
     public Task<SettingsLoadResult> LoadAsync(CancellationToken cancellationToken = default)
@@ -25,7 +27,7 @@ internal sealed class StubSettingsStore : ISettingsStore
             CorruptBackupPath: null));
     }
 
-    public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         SaveCount++;
@@ -34,8 +36,12 @@ internal sealed class StubSettingsStore : ISettingsStore
             throw new IOException("Forced settings save failure.");
         }
 
+        if (PendingSave is not null)
+        {
+            await PendingSave.Task.WaitAsync(cancellationToken);
+        }
+
         Settings = settings;
-        return Task.CompletedTask;
     }
 }
 

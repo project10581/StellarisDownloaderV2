@@ -44,6 +44,12 @@
     <sys:String x:Key="Settings.CheckAppOnStartup">Check application updates on startup</sys:String>
     <sys:String x:Key="Settings.Save">Save</sys:String>
     <sys:String x:Key="Settings.Cancel">Cancel</sys:String>
+    <sys:String x:Key="Settings.ConfirmTitle">Confirm settings</sys:String>
+    <sys:String x:Key="Settings.ConfirmMessage">Save these settings? A changed mod library will also switch the SteamCMD junction and rescan the folder.</sys:String>
+    <sys:String x:Key="Settings.ErrorTitle">Settings error</sys:String>
+    <sys:String x:Key="Settings.SuccessTitle">Settings saved</sys:String>
+    <sys:String x:Key="Settings.ScanRetry">The new library and settings were saved, but its cache could not be rebuilt. Use Rescan library from the main window to retry.</sys:String>
+    <sys:String x:Key="Settings.CorruptBackup">The previous settings file was damaged and moved aside. Complete setup to continue.</sys:String>
     <sys:String x:Key="Settings.Required">Choose a language and a mod library folder to continue.</sys:String>
     <sys:String x:Key="Settings.InvalidRoot">Choose a valid mod library folder.</sys:String>
     <sys:String x:Key="Settings.SaveFailed">Settings could not be saved.</sys:String>

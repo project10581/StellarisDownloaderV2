@@ -25,6 +25,9 @@
     <DockPanel Margin="16">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
             <Button Style="{StaticResource ToolbarButton}"
+                    Content="{DynamicResource Command.Settings}"
+                    Click="SettingsButton_Click" />
+            <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Refresh}"
                     Command="{Binding RefreshCommand}" />
             <Button Style="{StaticResource ToolbarButton}"

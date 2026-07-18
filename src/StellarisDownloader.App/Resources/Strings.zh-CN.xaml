@@ -44,6 +44,12 @@
     <sys:String x:Key="Settings.CheckAppOnStartup">启动时检查应用更新</sys:String>
     <sys:String x:Key="Settings.Save">保存</sys:String>
     <sys:String x:Key="Settings.Cancel">取消</sys:String>
+    <sys:String x:Key="Settings.ConfirmTitle">确认设置</sys:String>
+    <sys:String x:Key="Settings.ConfirmMessage">是否保存这些设置？如果模组库发生变化，程序还会切换 SteamCMD junction 并重新扫描该文件夹。</sys:String>
+    <sys:String x:Key="Settings.ErrorTitle">设置错误</sys:String>
+    <sys:String x:Key="Settings.SuccessTitle">设置已保存</sys:String>
+    <sys:String x:Key="Settings.ScanRetry">新模组库和设置已经保存，但缓存重建失败。请在主窗口使用“重新扫描模组库”重试。</sys:String>
+    <sys:String x:Key="Settings.CorruptBackup">原设置文件已损坏并移到备份，请完成初始化后继续。</sys:String>
     <sys:String x:Key="Settings.Required">请选择语言和模组库文件夹后继续。</sys:String>
     <sys:String x:Key="Settings.InvalidRoot">请选择有效的模组库文件夹。</sys:String>
     <sys:String x:Key="Settings.SaveFailed">无法保存设置。</sys:String>
