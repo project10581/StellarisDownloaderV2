@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Windows;
+using Serilog;
 using StellarisDownloader.App.Services;
 using StellarisDownloader.App.ViewModels;
 using StellarisDownloader.Core.Integrations;
@@ -27,6 +28,7 @@ public partial class App : Application, IDisposable
 
         try
         {
+            Log.Information("Initializing application services.");
             var paths = AppDataPaths.CreateDefault();
             paths.EnsureDirectories();
 
@@ -156,6 +158,7 @@ public partial class App : Application, IDisposable
         }
         catch (Exception exception)
         {
+            Log.Error(exception, "Application startup failed.");
             MessageBox.Show(
                 exception.Message,
                 "Stellaris Downloader",
@@ -167,6 +170,7 @@ public partial class App : Application, IDisposable
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Log.Information("Stellaris Downloader V2 is exiting with code {ExitCode}.", e.ApplicationExitCode);
         Dispose();
         base.OnExit(e);
     }
