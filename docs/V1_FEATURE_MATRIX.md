@@ -234,3 +234,25 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 - 普通自动测试不访问真实 SteamCMD、Workshop API 或 Steam Community 页面；这些入口使用 HTTP、进程、文件系统和安全策略替身。真实联网下载、Steam 页面 DOM 兼容性、WebView2 交互和回收站恢复仍列入人工验收。
 - Steam Community 页面结构可能变化；独立脚本使用受限选择器和 MutationObserver，页面变化不会扩大本地桥权限，但可能需要维护卡片选择器。
 - `APPUP-01` 至 `APPUP-03`、Serilog、`win-x64` self-contained publish、Velopack Portable ZIP/feed、发行工作流和签名占位属于批次 6，尚未接入。
+
+## 15. 批次 6 实现状态
+
+已完成：
+
+- `APPUP-01`：应用更新服务使用公开的 V2 GitHub 仓库和 Velopack `GithubSource`；手动窗口显示当前版本、最新版本和 Release Notes。启动设置启用时，应用检查严格位于必要缓存恢复和模组更新检查之后；无更新保持静默，失败只写警告日志，不中止应用启动。源码开发运行不会误调用安装版更新源。
+- `APPUP-02`：下载使用 Velopack 的真实 0–100 进度与 `CancellationToken`；失败和 Velopack 自定义异常显示为可重试错误。下载完成后不会自动退出，用户可明确选择立即重启更新或稍后；同一会话复用更新状态，稍后重新打开窗口不会丢失已下载状态。
+- `APPUP-03`：显式 `Program.Main` 的第一条可执行语句且唯一生命周期调用为 `VelopackApp.Build().Run()`；vpk 1.2.0 在实际打包时验证了该入口。应用不创建自制 Python/EXE/helper 更新器；重启应用前会拒绝与模组写操作或下载队列并发，并关闭 WebView2/下载辅助窗口。
+- `SET-08`：Serilog 按天滚动，单文件上限 10 MiB，按时间最多保留 14 天；日志、设置、SQLite、预览缓存和按需 SteamCMD 均位于 `%LOCALAPPDATA%\StellarisDownloaderV2\`，不写入应用解压目录。
+- `REL-01`：`scripts/package.ps1` 固定发布 `win-x64` self-contained、`PublishSingleFile=false`、`PublishTrimmed=false`，并使用固定 vpk 1.2.0 生成 Portable ZIP、full nupkg、`releases.win.json` 和 `assets.win.json`。脚本拒绝 Setup/installer、SteamCMD、设置或数据库进入产物，并校验 JSON、根启动器和自包含运行时。
+- `REL-02`：独立 Windows 手动 Actions 工作流先执行 restore/format/build/test，再上传 Portable 与更新 feed 作为开发 artifact；不自动创建 GitHub Release。代码签名步骤明确保留为关闭状态，README 标明当前包未签名。
+
+验证证据：`AppUpdateServiceTests` 与 `ApplicationUpdateViewModelTests` 覆盖未打包运行、无更新、有更新、Release Notes、真实进度映射、下载失败、自定义异常、取消、稍后、显式 prepare→apply 顺序和并发准备失败；`ApplicationLoggerTests` 验证日志滚动配置。完成 UI 后共有 209 项自动测试通过，Release 编译为 0 警告、0 错误，WPF 可执行文件隐藏启动 3 秒保持存活。
+
+实际使用版本 `0.1.0-dev.1` 执行完整打包：vpk 验证 `VelopackApp.Run()`，生成一个约 69 MB 的 Portable ZIP、一个 full nupkg 和两个可解析 feed；首次包按预期没有 delta，也没有 Setup。Portable 解压后通过根启动器隐藏运行 5 秒，实际应用进程保持存活；解压目录内没有 `settings.json`、`library.db`、日志或 SteamCMD，随后仅删除了已验证的临时解压目录。批次完成时再次原样执行 `dotnet restore`、`dotnet format --verify-no-changes`、`dotnet build -c Release` 和 `dotnet test -c Release`，全部通过。
+
+已知限制与发布边界：
+
+- 普通 CI 和自动测试不访问真实 GitHub 更新 feed；更新网络和 Velopack 进程通过服务边界替身测试。正式更新链仍需在两个连续正式版本的人工验收中验证“上一 Portable → 下一版本”。
+- 首次打包没有可用于生成 delta 的上一版本；正式增量发布时必须把上一个 feed/nupkg 与新版本一同交给发布流程，并把更新 feed 引用的 nupkg 同时上传。
+- 当前没有代码签名证书，Windows 可能显示未知发布者提示。开发阶段只生成 Actions artifact；功能矩阵和人工验收全部完成前，不自动创建正式 GitHub Release。
+- WebView2 实际页面交互、真实 SteamCMD 下载、Windows 回收站恢复以及跨正式版本更新仍保留为发布前人工验收项目；V1 在此期间继续保留且只读。
