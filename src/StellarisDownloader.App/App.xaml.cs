@@ -130,6 +130,29 @@ public partial class App : Application, IDisposable
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
             await viewModel.InitializeAsync().ConfigureAwait(true);
+
+            var startupSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
+            if (startupSettings.Settings.CheckModUpdatesOnStartup
+                && viewModel.CanRunWriteOperations)
+            {
+                var startupUpdates = new UpdateSelectionViewModel(
+                    settingsStore,
+                    modOperationService);
+                await startupUpdates.CheckUpdatesAsync().ConfigureAwait(true);
+                if (startupUpdates.Items.Any(item => item.State != UpdateState.UpToDate))
+                {
+                    var updateWindow = new UpdateSelectionWindow(startupUpdates)
+                    {
+                        Owner = mainWindow,
+                    };
+                    updateWindow.ShowDialog();
+                    await viewModel.RefreshAsync().ConfigureAwait(true);
+                }
+                else
+                {
+                    startupUpdates.Dispose();
+                }
+            }
         }
         catch (Exception exception)
         {
