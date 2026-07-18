@@ -101,12 +101,15 @@ internal sealed class StubWorkshopClient : IWorkshopClient
 
     public IReadOnlyList<string> LastRequestedIds { get; private set; } = [];
 
+    public int CallCount { get; private set; }
+
     public Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataBatchAsync(
         IReadOnlyCollection<string> workshopIds,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        CallCount++;
         LastRequestedIds = workshopIds.ToArray();
         return Task.FromResult(metadata);
     }

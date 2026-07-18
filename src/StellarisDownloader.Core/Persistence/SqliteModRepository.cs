@@ -326,6 +326,11 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             IsolationLevel.Serializable,
             cancellationToken).ConfigureAwait(false);
 
+        var storedCacheState = await ReadStoredCacheStateAsync(
+            connection,
+            transaction,
+            cancellationToken).ConfigureAwait(false);
+        var isSameLibraryRoot = LibraryRootsEqual(normalizedRoot, storedCacheState.LibraryRoot);
         var existingRecords = await ReadAllModsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
         await using (var deleteCommand = connection.CreateCommand())
         {
@@ -344,7 +349,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             }
 
             var mergedRecord = existingRecords.TryGetValue(record.WorkshopId, out var existingRecord)
-                ? PreserveCachedMetadata(record, existingRecord)
+                ? MergeSnapshotRecord(record, existingRecord, isSameLibraryRoot)
                 : record;
             await UpsertModAsync(connection, transaction, mergedRecord, cancellationToken).ConfigureAwait(false);
         }
@@ -500,11 +505,21 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         }
     }
 
+    private static Task<StoredCacheState> ReadStoredCacheStateAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken) =>
+        ReadStoredCacheStateAsync(
+            connection,
+            transaction: null,
+            cancellationToken);
+
     private static async Task<StoredCacheState> ReadStoredCacheStateAsync(
         SqliteConnection connection,
+        SqliteTransaction? transaction,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT schema_version, library_root, is_stale, last_rebuilt_at_utc
             FROM cache_state
@@ -532,16 +547,30 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static ModRecord PreserveCachedMetadata(ModRecord incoming, ModRecord cached)
+    private static ModRecord MergeSnapshotRecord(
+        ModRecord incoming,
+        ModRecord cached,
+        bool isSameLibraryRoot)
     {
-        return incoming with
+        var merged = incoming with
         {
             Title = incoming.Title ?? cached.Title,
             Description = incoming.Description ?? cached.Description,
             PreviewUrl = incoming.PreviewUrl ?? cached.PreviewUrl,
             CreatorId = incoming.CreatorId ?? cached.CreatorId,
             CreatedAtUtc = incoming.CreatedAtUtc ?? cached.CreatedAtUtc,
+            FileSize = incoming.FileSize ?? cached.FileSize,
         };
+
+        return isSameLibraryRoot
+            ? merged with
+            {
+                ImportedOrDownloadedAtUtc = cached.ImportedOrDownloadedAtUtc,
+                InstalledWorkshopUpdatedAtUtc = cached.InstalledWorkshopUpdatedAtUtc,
+                LastOperationStatus = cached.LastOperationStatus,
+                LastError = cached.LastError,
+            }
+            : merged;
     }
 
     private static string NormalizeLibraryRoot(string libraryRoot)

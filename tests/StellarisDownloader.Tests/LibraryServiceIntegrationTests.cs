@@ -33,6 +33,7 @@ public sealed class LibraryServiceIntegrationTests
         var service = new LibraryService(
             settingsStore,
             repository,
+            new StubWorkshopClient(),
             junctionManager,
             coordinator,
             junctionPath);

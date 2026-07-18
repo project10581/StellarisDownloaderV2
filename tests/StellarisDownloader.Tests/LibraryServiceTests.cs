@@ -22,6 +22,8 @@ public sealed class LibraryServiceTests
         await File.WriteAllTextAsync(Path.Combine(root, "600"), "a file is not a mod directory");
         var oldTimestamp = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc);
         Directory.SetLastWriteTimeUtc(Path.Combine(root, "100"), oldTimestamp);
+        var newImportTimestamp = oldTimestamp.AddDays(1);
+        Directory.SetLastWriteTimeUtc(Path.Combine(root, "400"), newImportTimestamp);
 
         var databasePath = temporaryDirectory.GetPath("library.db");
         using var repository = new SqliteModRepository(databasePath);
@@ -33,10 +35,16 @@ public sealed class LibraryServiceTests
         var settings = new StubSettingsStore(new AppSettings { LibraryRoot = root });
         var junctionPath = temporaryDirectory.GetPath(Path.Combine("steamcmd", "281990"));
         var junction = new MemoryJunctionManager(junctionPath, root);
+        var workshopClient = new StubWorkshopClient(new Dictionary<string, WorkshopMetadata>
+        {
+            ["100"] = CreateMetadata("100", "First imported mod"),
+            ["400"] = CreateMetadata("400", "Second imported mod"),
+        });
         using var coordinator = new WriteOperationCoordinator();
         var service = new LibraryService(
             settings,
             repository,
+            workshopClient,
             junction,
             coordinator,
             junctionPath);
@@ -50,15 +58,158 @@ public sealed class LibraryServiceTests
         Assert.Equal(["400"], result.AddedWorkshopIds);
         Assert.Equal(["200"], result.RemovedWorkshopIds);
         Assert.Equal(["100", "400"], result.Records.Select(record => record.WorkshopId));
-        var imported = Assert.Single(result.Records, record => record.WorkshopId == "100");
-        Assert.Equal(new DateTimeOffset(oldTimestamp), imported.ImportedOrDownloadedAtUtc);
-        Assert.Equal(["100", "400"], (await repository.ListAsync(root)).Select(record => record.WorkshopId));
+        Assert.Equal(["First imported mod", "Second imported mod"], result.Records.Select(record => record.Title));
+        Assert.Equal(1, workshopClient.CallCount);
+        Assert.Equal(["100", "400"], workshopClient.LastRequestedIds);
+        var existing = Assert.Single(result.Records, record => record.WorkshopId == "100");
+        Assert.Equal(TestTime, existing.ImportedOrDownloadedAtUtc);
+        var imported = Assert.Single(result.Records, record => record.WorkshopId == "400");
+        Assert.Equal(new DateTimeOffset(newImportTimestamp), imported.ImportedOrDownloadedAtUtc);
+        var persistedRecords = await repository.ListAsync(root);
+        Assert.Equal(["100", "400"], persistedRecords.Select(record => record.WorkshopId));
+        Assert.Equal(["First imported mod", "Second imported mod"], persistedRecords.Select(record => record.Title));
+    }
+
+    [Fact]
+    public async Task RescanRefreshesMetadataWhilePreservingInstalledStateAndFallbackMetadata()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var root = temporaryDirectory.GetPath("library");
+        await CreateNonEmptyDirectoryAsync(root, "100");
+        await CreateNonEmptyDirectoryAsync(root, "200");
+        await CreateNonEmptyDirectoryAsync(root, "300");
+        var newImportTimestamp = new DateTime(2024, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(Path.Combine(root, "300"), newImportTimestamp);
+
+        var importedAtUtc = TestTime.AddDays(-10);
+        var installedWorkshopUpdatedAtUtc = TestTime.AddDays(-5);
+        var existingWithFreshMetadata = CreateRecord(root, "100") with
+        {
+            Title = "Cached title",
+            Description = "Cached description",
+            FileSize = 10,
+            ImportedOrDownloadedAtUtc = importedAtUtc,
+            InstalledWorkshopUpdatedAtUtc = installedWorkshopUpdatedAtUtc,
+            LastOperationStatus = OperationStatus.Failed,
+            LastError = "Previous update failed.",
+        };
+        var existingWithFailedMetadata = CreateRecord(root, "200") with
+        {
+            Title = "Fallback title",
+            Description = "Fallback description",
+            PreviewUrl = "https://example.test/old-preview.jpg",
+            CreatorId = "old-creator",
+            CreatedAtUtc = TestTime.AddYears(-1),
+            FileSize = 20,
+        };
+        using var repository = new SqliteModRepository(temporaryDirectory.GetPath("library.db"));
+        await repository.InitializeAsync();
+        await repository.ReplaceSnapshotAsync(
+            root,
+            [existingWithFreshMetadata, existingWithFailedMetadata],
+            TestTime);
+        await repository.MarkCacheStaleAsync();
+        var workshopClient = new StubWorkshopClient(new Dictionary<string, WorkshopMetadata>
+        {
+            ["100"] = new WorkshopMetadata
+            {
+                WorkshopId = "100",
+                Title = "Remote title",
+                Description = "Remote description",
+                PreviewUrl = "https://example.test/new-preview.jpg",
+                CreatorId = "new-creator",
+                CreatedAtUtc = TestTime.AddYears(-2),
+                FileSize = 30,
+            },
+        });
+        var settings = new StubSettingsStore(new AppSettings { LibraryRoot = root });
+        var junctionPath = temporaryDirectory.GetPath(Path.Combine("steamcmd", "281990"));
+        var junction = new MemoryJunctionManager(junctionPath, root);
+        using var coordinator = new WriteOperationCoordinator();
+        var service = new LibraryService(
+            settings,
+            repository,
+            workshopClient,
+            junction,
+            coordinator,
+            junctionPath,
+            new FixedTimeProvider(TestTime.AddHours(1)));
+
+        var result = await service.ScanAsync(root);
+
+        Assert.Equal(OperationStatus.Succeeded, result.Status);
+        Assert.Equal(1, workshopClient.CallCount);
+        Assert.Equal(["100", "200", "300"], workshopClient.LastRequestedIds);
+        var refreshed = Assert.Single(result.Records, record => record.WorkshopId == "100");
+        Assert.Equal("Remote title", refreshed.Title);
+        Assert.Equal("Remote description", refreshed.Description);
+        Assert.Equal("https://example.test/new-preview.jpg", refreshed.PreviewUrl);
+        Assert.Equal("new-creator", refreshed.CreatorId);
+        Assert.Equal(TestTime.AddYears(-2), refreshed.CreatedAtUtc);
+        Assert.Equal(30, refreshed.FileSize);
+        Assert.Equal(importedAtUtc, refreshed.ImportedOrDownloadedAtUtc);
+        Assert.Equal(installedWorkshopUpdatedAtUtc, refreshed.InstalledWorkshopUpdatedAtUtc);
+        Assert.Equal(OperationStatus.Failed, refreshed.LastOperationStatus);
+        Assert.Equal("Previous update failed.", refreshed.LastError);
+
+        var fallback = Assert.Single(result.Records, record => record.WorkshopId == "200");
+        Assert.Equal("Fallback title", fallback.Title);
+        Assert.Equal("Fallback description", fallback.Description);
+        Assert.Equal("https://example.test/old-preview.jpg", fallback.PreviewUrl);
+        Assert.Equal("old-creator", fallback.CreatorId);
+        Assert.Equal(TestTime.AddYears(-1), fallback.CreatedAtUtc);
+        Assert.Equal(20, fallback.FileSize);
+
+        var imported = Assert.Single(result.Records, record => record.WorkshopId == "300");
+        Assert.Null(imported.Title);
+        Assert.Null(imported.Description);
+        Assert.Equal(new DateTimeOffset(newImportTimestamp), imported.ImportedOrDownloadedAtUtc);
+        Assert.Null(imported.InstalledWorkshopUpdatedAtUtc);
+        Assert.Equal(OperationStatus.Succeeded, imported.LastOperationStatus);
+        Assert.Null(imported.LastError);
+
+        var persisted = await repository.ListAsync(root);
+        Assert.Equal(result.Records, persisted);
+    }
+
+    [Fact]
+    public async Task MetadataRequestFailureDoesNotBlockTheScanTransaction()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var root = temporaryDirectory.GetPath("library");
+        await CreateNonEmptyDirectoryAsync(root, "100");
+        using var repository = new SqliteModRepository(temporaryDirectory.GetPath("library.db"));
+        await repository.InitializeAsync();
+        var settings = new StubSettingsStore(new AppSettings { LibraryRoot = root });
+        var junctionPath = temporaryDirectory.GetPath(Path.Combine("steamcmd", "281990"));
+        var junction = new MemoryJunctionManager(junctionPath, root);
+        using var coordinator = new WriteOperationCoordinator();
+        var service = new LibraryService(
+            settings,
+            repository,
+            new FailingWorkshopClient(),
+            junction,
+            coordinator,
+            junctionPath);
+
+        var result = await service.ScanAsync(root);
+
+        Assert.Equal(OperationStatus.Succeeded, result.Status);
+        var imported = Assert.Single(result.Records);
+        Assert.Equal("100", imported.WorkshopId);
+        Assert.Null(imported.Title);
+        Assert.Equal(CacheState.Valid, (await repository.GetCacheStateAsync(root)).State);
+        Assert.Single(await repository.ListAsync(root));
     }
 
     [Fact]
     public async Task SuccessfulSwitchCommitsSettingsThenRebuildsTheNewRoot()
     {
-        using var fixture = await LibraryServiceFixture.CreateAsync();
+        var workshopClient = new StubWorkshopClient(new Dictionary<string, WorkshopMetadata>
+        {
+            ["200"] = CreateMetadata("200", "Imported from the switched library"),
+        });
+        using var fixture = await LibraryServiceFixture.CreateAsync(workshopClient: workshopClient);
         await CreateNonEmptyDirectoryAsync(fixture.NewRoot, "200");
         var proposed = fixture.Settings.Settings with
         {
@@ -77,8 +228,12 @@ public sealed class LibraryServiceTests
         Assert.Equal(fixture.NewRoot, fixture.Junction.State.TargetPath);
         Assert.Equal(["200"], result.ScanResult?.AddedWorkshopIds);
         Assert.Equal(["100"], result.ScanResult?.RemovedWorkshopIds);
+        Assert.Equal("Imported from the switched library", result.ScanResult?.Records.Single().Title);
+        Assert.Equal(["200"], workshopClient.LastRequestedIds);
         Assert.Equal(CacheState.Valid, (await fixture.Repository.GetCacheStateAsync(fixture.NewRoot)).State);
-        Assert.Single(await fixture.Repository.ListAsync(fixture.NewRoot));
+        Assert.Equal(
+            "Imported from the switched library",
+            (await fixture.Repository.ListAsync(fixture.NewRoot)).Single().Title);
     }
 
     [Fact]
@@ -178,6 +333,24 @@ public sealed class LibraryServiceTests
         };
     }
 
+    private static WorkshopMetadata CreateMetadata(string workshopId, string title)
+    {
+        return new WorkshopMetadata
+        {
+            WorkshopId = workshopId,
+            Title = title,
+        };
+    }
+
+    private sealed class FailingWorkshopClient : IWorkshopClient
+    {
+        public Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataBatchAsync(
+            IReadOnlyCollection<string> workshopIds,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw new HttpRequestException("Forced Workshop metadata failure.");
+    }
+
     private sealed class LibraryServiceFixture : IDisposable
     {
         private readonly WriteOperationCoordinator coordinator;
@@ -220,7 +393,9 @@ public sealed class LibraryServiceTests
 
         public string JunctionPath { get; }
 
-        public static async Task<LibraryServiceFixture> CreateAsync(bool failReplacement = false)
+        public static async Task<LibraryServiceFixture> CreateAsync(
+            bool failReplacement = false,
+            IWorkshopClient? workshopClient = null)
         {
             var temporaryDirectory = new TemporaryDirectory();
             var oldRoot = temporaryDirectory.GetPath("old-library");
@@ -242,6 +417,7 @@ public sealed class LibraryServiceTests
             var service = new LibraryService(
                 settings,
                 serviceRepository,
+                workshopClient ?? new StubWorkshopClient(),
                 junction,
                 coordinator,
                 junctionPath);

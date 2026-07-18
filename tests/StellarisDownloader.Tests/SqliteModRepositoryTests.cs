@@ -75,7 +75,7 @@ public sealed class SqliteModRepositoryTests
     }
 
     [Fact]
-    public async Task SnapshotPreservesCachedMetadataWhenRefreshHasNoMetadata()
+    public async Task StaleSameRootSnapshotPreservesCachedMetadataAndInstalledState()
     {
         using var temporaryDirectory = new TemporaryDirectory();
         var databasePath = temporaryDirectory.GetPath("library.db");
@@ -88,12 +88,27 @@ public sealed class SqliteModRepositoryTests
             PreviewUrl = "https://example.invalid/preview.png",
             CreatorId = "42",
             CreatedAtUtc = TestTime.AddYears(-1),
+            FileSize = 456,
+            ImportedOrDownloadedAtUtc = TestTime.AddDays(-10),
+            InstalledWorkshopUpdatedAtUtc = TestTime.AddDays(-5),
+            LastOperationStatus = OperationStatus.Failed,
+            LastError = "Previous update failed.",
         };
         await repository.ReplaceSnapshotAsync(root, [cached], TestTime);
         var scanned = CreateRecord(root, "100", title: null) with
         {
+            Description = null,
+            PreviewUrl = null,
+            CreatorId = null,
+            CreatedAtUtc = null,
+            FileSize = null,
             ImportedOrDownloadedAtUtc = TestTime.AddHours(1),
+            InstalledWorkshopUpdatedAtUtc = null,
+            LastOperationStatus = OperationStatus.Succeeded,
+            LastError = null,
+            LastScannedAtUtc = TestTime.AddHours(1),
         };
+        await repository.MarkCacheStaleAsync();
 
         await repository.ReplaceSnapshotAsync(root, [scanned], TestTime.AddHours(1));
 
@@ -104,7 +119,58 @@ public sealed class SqliteModRepositoryTests
         Assert.Equal(cached.PreviewUrl, result.PreviewUrl);
         Assert.Equal(cached.CreatorId, result.CreatorId);
         Assert.Equal(cached.CreatedAtUtc, result.CreatedAtUtc);
-        Assert.Equal(scanned.ImportedOrDownloadedAtUtc, result.ImportedOrDownloadedAtUtc);
+        Assert.Equal(cached.FileSize, result.FileSize);
+        Assert.Equal(cached.ImportedOrDownloadedAtUtc, result.ImportedOrDownloadedAtUtc);
+        Assert.Equal(cached.InstalledWorkshopUpdatedAtUtc, result.InstalledWorkshopUpdatedAtUtc);
+        Assert.Equal(cached.LastOperationStatus, result.LastOperationStatus);
+        Assert.Equal(cached.LastError, result.LastError);
+        Assert.Equal(scanned.LastScannedAtUtc, result.LastScannedAtUtc);
+    }
+
+    [Fact]
+    public async Task CrossRootSnapshotPreservesOnlyCachedMetadata()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var databasePath = temporaryDirectory.GetPath("library.db");
+        var oldRoot = temporaryDirectory.GetPath("old-library");
+        var newRoot = temporaryDirectory.GetPath("new-library");
+        using var repository = new SqliteModRepository(databasePath);
+        await repository.InitializeAsync();
+        var cached = CreateRecord(oldRoot, "100", "Cached title") with
+        {
+            Description = "Cached description",
+            FileSize = 456,
+            ImportedOrDownloadedAtUtc = TestTime.AddDays(-10),
+            InstalledWorkshopUpdatedAtUtc = TestTime.AddDays(-5),
+            LastOperationStatus = OperationStatus.Failed,
+            LastError = "Old library failure.",
+        };
+        await repository.ReplaceSnapshotAsync(oldRoot, [cached], TestTime);
+        var importedAtUtc = TestTime.AddHours(2);
+        var scanned = CreateRecord(newRoot, "100", title: null) with
+        {
+            Description = null,
+            FileSize = null,
+            ImportedOrDownloadedAtUtc = importedAtUtc,
+            InstalledWorkshopUpdatedAtUtc = null,
+            LastOperationStatus = OperationStatus.Succeeded,
+            LastError = null,
+            LastScannedAtUtc = TestTime.AddHours(2),
+        };
+        await repository.MarkCacheStaleAsync();
+
+        await repository.ReplaceSnapshotAsync(newRoot, [scanned], TestTime.AddHours(2));
+
+        var result = await repository.GetAsync(newRoot, "100");
+        Assert.NotNull(result);
+        Assert.Equal(cached.Title, result.Title);
+        Assert.Equal(cached.Description, result.Description);
+        Assert.Equal(cached.FileSize, result.FileSize);
+        Assert.Equal(importedAtUtc, result.ImportedOrDownloadedAtUtc);
+        Assert.Null(result.InstalledWorkshopUpdatedAtUtc);
+        Assert.Equal(OperationStatus.Succeeded, result.LastOperationStatus);
+        Assert.Null(result.LastError);
+        Assert.Equal(Path.Combine(newRoot, "100"), result.ContentPath);
     }
 
     [Fact]

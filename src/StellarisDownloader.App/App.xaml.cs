@@ -43,6 +43,8 @@ public partial class App : Application, IDisposable
             localizationService.SetLanguage(loadedSettings.Settings.Language);
 
             writeCoordinator = new WriteOperationCoordinator();
+            httpClient = new HttpClient();
+            var workshopClient = new WorkshopClient(httpClient);
             var junctionPath = Path.Combine(
                 paths.SteamCmdDirectory,
                 "steamapps",
@@ -53,6 +55,7 @@ public partial class App : Application, IDisposable
             var libraryService = new LibraryService(
                 settingsStore,
                 modRepository,
+                workshopClient,
                 junctionManager,
                 writeCoordinator,
                 junctionPath);
@@ -90,8 +93,6 @@ public partial class App : Application, IDisposable
                 return CreateSettingsWindow(currentSettings, isInitialization: false);
             }
 
-            httpClient = new HttpClient();
-            var workshopClient = new WorkshopClient(httpClient);
             steamCmdService = new SteamCmdService(
                 httpClient,
                 new ProcessRunner(),

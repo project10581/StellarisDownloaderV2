@@ -11,6 +11,7 @@ public sealed class LibraryService : ILibraryService
 
     private readonly ISettingsStore settingsStore;
     private readonly IModRepository modRepository;
+    private readonly IWorkshopClient workshopClient;
     private readonly IJunctionManager junctionManager;
     private readonly WriteOperationCoordinator writeCoordinator;
     private readonly string junctionPath;
@@ -19,6 +20,7 @@ public sealed class LibraryService : ILibraryService
     public LibraryService(
         ISettingsStore settingsStore,
         IModRepository modRepository,
+        IWorkshopClient workshopClient,
         IJunctionManager junctionManager,
         WriteOperationCoordinator writeCoordinator,
         string junctionPath,
@@ -26,12 +28,14 @@ public sealed class LibraryService : ILibraryService
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(modRepository);
+        ArgumentNullException.ThrowIfNull(workshopClient);
         ArgumentNullException.ThrowIfNull(junctionManager);
         ArgumentNullException.ThrowIfNull(writeCoordinator);
         ArgumentException.ThrowIfNullOrWhiteSpace(junctionPath);
 
         this.settingsStore = settingsStore;
         this.modRepository = modRepository;
+        this.workshopClient = workshopClient;
         this.junctionManager = junctionManager;
         this.writeCoordinator = writeCoordinator;
         this.junctionPath = NormalizePath(junctionPath);
@@ -156,6 +160,7 @@ public sealed class LibraryService : ILibraryService
             return await ScanCoreAsync(
                 normalizedRoot,
                 previousRecords,
+                preserveExistingState: true,
                 progress,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -254,6 +259,8 @@ public sealed class LibraryService : ILibraryService
             var scanResult = await ScanCoreAsync(
                 normalizedRoot,
                 previousRecords,
+                preserveExistingState: previousRoot is not null
+                    && string.Equals(previousRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase),
                 progress,
                 cancellationToken).ConfigureAwait(false);
             progress?.Report(new OperationProgress(
@@ -292,6 +299,7 @@ public sealed class LibraryService : ILibraryService
     private async Task<LibraryScanResult> ScanCoreAsync(
         string normalizedRoot,
         IReadOnlyCollection<ModRecord> previousRecords,
+        bool preserveExistingState,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -306,6 +314,9 @@ public sealed class LibraryService : ILibraryService
         var records = new List<ModRecord>(workshopDirectories.Length);
         var emptyWorkshopIds = new List<string>();
         var scannedAtUtc = timeProvider.GetUtcNow();
+        var previousRecordsById = previousRecords.ToDictionary(
+            record => record.WorkshopId,
+            StringComparer.Ordinal);
 
         progress?.Report(new OperationProgress(
             ScanStage,
@@ -325,11 +336,21 @@ public sealed class LibraryService : ILibraryService
             }
             else
             {
+                previousRecordsById.TryGetValue(workshopId, out var previousRecord);
                 records.Add(new ModRecord
                 {
                     WorkshopId = workshopId,
                     ContentPath = directory.FullName,
-                    ImportedOrDownloadedAtUtc = new DateTimeOffset(directory.LastWriteTimeUtc),
+                    ImportedOrDownloadedAtUtc = preserveExistingState && previousRecord is not null
+                        ? previousRecord.ImportedOrDownloadedAtUtc
+                        : new DateTimeOffset(directory.LastWriteTimeUtc),
+                    InstalledWorkshopUpdatedAtUtc = preserveExistingState
+                        ? previousRecord?.InstalledWorkshopUpdatedAtUtc
+                        : null,
+                    LastOperationStatus = preserveExistingState && previousRecord is not null
+                        ? previousRecord.LastOperationStatus
+                        : OperationStatus.Succeeded,
+                    LastError = preserveExistingState ? previousRecord?.LastError : null,
                     LastScannedAtUtc = scannedAtUtc,
                 });
             }
@@ -342,11 +363,25 @@ public sealed class LibraryService : ILibraryService
                 Message: $"Scanned Workshop item {workshopId}."));
         }
 
+        var metadataById = await GetMetadataWithoutBlockingScanAsync(
+            records.Select(record => record.WorkshopId).ToArray(),
+            progress,
+            cancellationToken).ConfigureAwait(false);
+        records = records
+            .Select(record => MergeMetadata(
+                record,
+                previousRecordsById.GetValueOrDefault(record.WorkshopId),
+                metadataById.GetValueOrDefault(record.WorkshopId)))
+            .ToList();
+
         await modRepository.ReplaceSnapshotAsync(
             normalizedRoot,
             records,
             scannedAtUtc,
             cancellationToken).ConfigureAwait(false);
+        records = (await modRepository.ListAsync(
+            normalizedRoot,
+            CancellationToken.None).ConfigureAwait(false)).ToList();
 
         var previousIds = previousRecords
             .Select(record => record.WorkshopId)
@@ -368,6 +403,46 @@ public sealed class LibraryService : ILibraryService
                 .ToArray(),
             EmptyWorkshopIds = emptyWorkshopIds,
             IgnoredDirectoryCount = ignoredDirectoryCount,
+        };
+    }
+
+    private async Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataWithoutBlockingScanAsync(
+        string[] workshopIds,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (workshopIds.Length == 0)
+        {
+            return new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal);
+        }
+
+        try
+        {
+            return await workshopClient.GetMetadataBatchAsync(
+                workshopIds,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsMetadataLookupFailure(exception, cancellationToken))
+        {
+            return new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal);
+        }
+    }
+
+    private static ModRecord MergeMetadata(
+        ModRecord scannedRecord,
+        ModRecord? previousRecord,
+        WorkshopMetadata? metadata)
+    {
+        return scannedRecord with
+        {
+            AppId = metadata?.AppId ?? previousRecord?.AppId ?? scannedRecord.AppId,
+            Title = metadata?.Title ?? previousRecord?.Title,
+            Description = metadata?.Description ?? previousRecord?.Description,
+            PreviewUrl = metadata?.PreviewUrl ?? previousRecord?.PreviewUrl,
+            CreatorId = metadata?.CreatorId ?? previousRecord?.CreatorId,
+            CreatedAtUtc = metadata?.CreatedAtUtc ?? previousRecord?.CreatedAtUtc,
+            FileSize = metadata?.FileSize ?? previousRecord?.FileSize,
         };
     }
 
@@ -452,6 +527,17 @@ public sealed class LibraryService : ILibraryService
             or SecurityException
             or SqliteException;
     }
+
+    private static bool IsMetadataLookupFailure(
+        Exception exception,
+        CancellationToken cancellationToken) =>
+        exception is OperationCanceledException
+            ? !cancellationToken.IsCancellationRequested
+            : exception is HttpRequestException
+                or IOException
+                or InvalidDataException
+                or TimeoutException
+                or System.Text.Json.JsonException;
 
     private static string? NormalizeOptionalPath(string? path) =>
         string.IsNullOrWhiteSpace(path) ? null : NormalizePath(path);
