@@ -256,3 +256,15 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 - 首次打包没有可用于生成 delta 的上一版本；正式增量发布时必须把上一个 feed/nupkg 与新版本一同交给发布流程，并把更新 feed 引用的 nupkg 同时上传。
 - 当前没有代码签名证书，Windows 可能显示未知发布者提示。开发阶段只生成 Actions artifact；功能矩阵和人工验收全部完成前，不自动创建正式 GitHub Release。
 - WebView2 实际页面交互、真实 SteamCMD 下载、Windows 回收站恢复以及跨正式版本更新仍保留为发布前人工验收项目；V1 在此期间继续保留且只读。
+
+## 16. 发布前产物与现有库验收修正
+
+已完成：
+
+- GitHub Actions 首次便携包实际启动暴露了主窗口 BAML 解析错误：`Binding.TargetNullValue` 不能接收嵌套的 `DynamicResource`。错误状态占位文本已改为依赖属性上的动态资源 Setter，并新增 `CompiledXamlTests`，在真实 STA Dispatcher 上构造 `MainWindow`、执行生产 `InitializeComponent()`，防止仅靠编译和“进程仍存活”漏过错误对话框。
+- `UI-02`、`LIB-04`、`LIB-05`：真实界面检查发现旧目录导入记录只有 Workshop ID，列表按要求隐藏 ID 后会全部显示为占位符。`LibraryService` 现已在扫描非空数字目录后通过同一个 `IWorkshopClient` 批量获取标题、描述、预览、作者、创建时间和文件大小；API 部分缺失或网络失败不会阻止文件快照提交，同 ID 回退旧元数据，新 ID 保持空元数据。
+- 同根重扫（包括 stale 后重试）会保留 `ImportedOrDownloadedAtUtc`、`InstalledWorkshopUpdatedAtUtc`、最近操作状态和错误；跨根切换只允许沿用远程元数据，不把旧库的安装时间、安装快照或失败状态带入新库。Repository 在替换事务内根据原 `cache_state.LibraryRoot` 合并字段，扫描完成后重新读取已提交行作为 UI 结果，避免内存列表和 SQLite 内容不一致。
+
+验证证据：Release 构建为 0 警告、0 错误，完整自动测试 213/213 通过。隔离的真实 Steam Workshop API 冒烟测试使用现有小型模组 `2978067574`，成功得到标题 `020_更快的舰船升级速度`、文件大小 1313 bytes 和作者 ID；扫描结果与 SQLite 回读逐项一致。临时测试项目、数据库和模组副本已在验证后删除。
+
+仍待发布前人工验收：Computer Use 可以读取 WPF 可访问性树并确认左侧详情、右侧搜索/排序/列表，以及列表模板只绑定标题；但当前环境的截图捕获/窗口激活接口不稳定，尚未完成自动点击链。真实 SteamCMD 下载、WebView2 页面交互、回收站删除与恢复、以及两个连续正式版本间的 Velopack 更新仍按原计划保留为动作时验收项。
