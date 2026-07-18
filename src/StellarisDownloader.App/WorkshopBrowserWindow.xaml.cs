@@ -1,7 +1,11 @@
-using System.Diagnostics;
+using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Windows;
+using Microsoft.Data.Sqlite;
 using Microsoft.Web.WebView2.Core;
 using StellarisDownloader.App.Models;
 using StellarisDownloader.App.Services;
@@ -18,19 +22,28 @@ public partial class WorkshopBrowserWindow : Window
         "https://developer.microsoft.com/en-us/microsoft-edge/webview2/");
 
     private readonly DownloadQueueViewModel viewModel;
+    private readonly IInstalledWorkshopStateProvider installedStateProvider;
     private string? currentWorkshopId;
     private bool browserInitialized;
 
-    public WorkshopBrowserWindow(DownloadQueueViewModel viewModel)
+    public WorkshopBrowserWindow(
+        DownloadQueueViewModel viewModel,
+        IInstalledWorkshopStateProvider installedStateProvider)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
+        ArgumentNullException.ThrowIfNull(installedStateProvider);
         InitializeComponent();
         this.viewModel = viewModel;
+        this.installedStateProvider = installedStateProvider;
+        viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        ((INotifyCollectionChanged)viewModel.Items).CollectionChanged += Items_CollectionChanged;
         DataContext = viewModel;
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ((INotifyCollectionChanged)viewModel.Items).CollectionChanged -= Items_CollectionChanged;
         WorkshopWebView.Dispose();
         base.OnClosed(e);
     }
@@ -121,6 +134,7 @@ public partial class WorkshopBrowserWindow : Window
         {
             await WorkshopWebView.CoreWebView2.ExecuteScriptAsync(
                 WorkshopBridgeScriptLoader.Load()).ConfigureAwait(true);
+            await SyncBrowserStateAsync().ConfigureAwait(true);
         }
         catch (InvalidOperationException exception)
         {
@@ -191,6 +205,7 @@ public partial class WorkshopBrowserWindow : Window
         {
             await viewModel.EnqueueAsync(
                 string.Join(Environment.NewLine, validation.WorkshopIds)).ConfigureAwait(true);
+            await SyncBrowserStateAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -208,6 +223,7 @@ public partial class WorkshopBrowserWindow : Window
         try
         {
             await viewModel.EnqueueAsync(currentWorkshopId).ConfigureAwait(true);
+            await SyncBrowserStateAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -222,9 +238,70 @@ public partial class WorkshopBrowserWindow : Window
             .Select(item => item.WorkshopId)
             .ToArray();
         viewModel.Remove(workshopIds);
+        _ = SyncBrowserStateAsync();
     }
 
-    private void ClearQueue_Click(object sender, RoutedEventArgs e) => viewModel.Clear();
+    private void ClearQueue_Click(object sender, RoutedEventArgs e)
+    {
+        viewModel.Clear();
+        _ = SyncBrowserStateAsync();
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DownloadQueueViewModel.IsBusy))
+        {
+            AddCurrentButton.IsEnabled = currentWorkshopId is not null && !viewModel.IsBusy;
+        }
+
+        if (e.PropertyName is nameof(DownloadQueueViewModel.SucceededCount)
+            or nameof(DownloadQueueViewModel.IsBusy))
+        {
+            _ = SyncBrowserStateAsync();
+        }
+    }
+
+    private void Items_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        _ = SyncBrowserStateAsync();
+
+    private async Task SyncBrowserStateAsync()
+    {
+        var source = GetCurrentSource();
+        if (!browserInitialized
+            || source is null
+            || !SteamCommunitySecurityPolicy.IsTrustedMessageSource(source))
+        {
+            return;
+        }
+
+        try
+        {
+            var installedIds = await installedStateProvider
+                .GetInstalledWorkshopIdsAsync().ConfigureAwait(true);
+            if (!IsCurrentDocument(source))
+            {
+                return;
+            }
+
+            var queuedIds = viewModel.Items
+                .Select(item => item.WorkshopId)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var stateJson = JsonSerializer.Serialize(new { queuedIds, installedIds });
+            await WorkshopWebView.CoreWebView2.ExecuteScriptAsync(
+                $"window.__stellarisDownloaderWorkshopBridge?.syncState({stateJson});")
+                .ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // A later navigation or application close owns the browser state.
+        }
+        catch (Exception exception) when (IsBrowserStateFailure(exception))
+        {
+            BrowserStatusText.Text = exception.Message;
+            BrowserStatusText.Visibility = Visibility.Visible;
+        }
+    }
 
     private void Back_Click(object sender, RoutedEventArgs e)
     {
@@ -288,4 +365,13 @@ public partial class WorkshopBrowserWindow : Window
             BrowserStatusText.Visibility = Visibility.Visible;
         }
     }
+
+    private static bool IsBrowserStateFailure(Exception exception) =>
+        exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or ArgumentException
+            or NotSupportedException
+            or COMException
+            or SqliteException;
 }

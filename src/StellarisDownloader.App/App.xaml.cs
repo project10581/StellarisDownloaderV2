@@ -104,6 +104,9 @@ public partial class App : Application, IDisposable
                 settingsStore,
                 workshopClient,
                 modOperationService);
+            var installedStateProvider = new InstalledWorkshopStateProvider(
+                settingsStore,
+                modRepository);
             var viewModel = new MainWindowViewModel(
                 settingsStore,
                 modRepository,
@@ -111,15 +114,18 @@ public partial class App : Application, IDisposable
                 new PreviewImageService(httpClient),
                 modOperationService,
                 downloadQueueViewModel);
+            UpdateSelectionWindow CreateUpdateWindow() =>
+                new(new UpdateSelectionViewModel(settingsStore, modOperationService));
+
             var mainWindow = new MainWindow(
                 viewModel,
                 downloadQueueViewModel,
                 CreateRegularSettingsWindowAsync,
                 () => new DownloadQueueWindow(downloadQueueViewModel),
-                () => new WorkshopBrowserWindow(downloadQueueViewModel),
-                () => new UpdateSelectionWindow(new UpdateSelectionViewModel(
-                    settingsStore,
-                    modOperationService)));
+                () => new WorkshopBrowserWindow(
+                    downloadQueueViewModel,
+                    installedStateProvider),
+                CreateUpdateWindow);
             MainWindow = mainWindow;
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;

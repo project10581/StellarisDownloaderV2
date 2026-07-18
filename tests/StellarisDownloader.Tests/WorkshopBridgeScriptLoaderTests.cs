@@ -12,6 +12,8 @@ public sealed class WorkshopBridgeScriptLoaderTests
         Assert.Contains("enqueueWorkshopIds", script, StringComparison.Ordinal);
         Assert.Contains("window.chrome.webview.postMessage", script, StringComparison.Ordinal);
         Assert.Contains("MutationObserver", script, StringComparison.Ordinal);
+        Assert.Contains("syncState", script, StringComparison.Ordinal);
+        Assert.Contains("installedIds", script, StringComparison.Ordinal);
         Assert.DoesNotContain("executeCommand", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("localPath", script, StringComparison.OrdinalIgnoreCase);
     }
