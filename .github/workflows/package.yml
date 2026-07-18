@@ -1,0 +1,60 @@
+name: Package portable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version to package
+        required: true
+        type: string
+        default: 0.1.0-dev.1
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and package Windows x64 artifact
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes
+
+      - name: Build
+        run: dotnet build -c Release
+
+      - name: Test
+        run: dotnet test -c Release
+
+      - name: Build Velopack portable artifact
+        shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: ./scripts/package.ps1 -Version $env:PACKAGE_VERSION
+
+      - name: Code signing placeholder (disabled)
+        if: ${{ false }}
+        shell: pwsh
+        run: Write-Host 'Code signing remains disabled until a certificate is configured.'
+
+      - name: Upload portable package and update feed
+        uses: actions/upload-artifact@v7
+        with:
+          name: StellarisDownloaderV2-${{ inputs.version }}-win-x64
+          path: artifacts/releases/**
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
