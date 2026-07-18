@@ -35,6 +35,147 @@ public sealed class SteamCmdServiceTests
     }
 
     [Fact]
+    public async Task EnsureInstalledRetriesVerificationAfterSteamCmdSelfUpdate()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var archive = CreateSteamCmdArchive();
+        using var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            StubHttpMessageHandler.Response(
+                HttpStatusCode.OK,
+                CreateBinaryContent(archive))));
+        using var httpClient = new HttpClient(handler);
+        ProcessRunResult[] verificationResults =
+        [
+            new() { ExitCode = 7 },
+            new() { ExitCode = 0 },
+        ];
+        var resultIndex = 0;
+        var runner = new StubProcessRunner((_, _) => verificationResults[resultIndex++]);
+        var steamCmdDirectory = temporaryDirectory.GetPath("steamcmd");
+        using var service = new SteamCmdService(httpClient, runner, steamCmdDirectory);
+
+        var result = await service.EnsureInstalledAsync();
+
+        Assert.Equal(OperationStatus.Succeeded, result.Status);
+        Assert.True(result.InstalledNow);
+        Assert.True(File.Exists(Path.Combine(steamCmdDirectory, "steamcmd.exe")));
+        Assert.Equal(2, runner.CallCount);
+    }
+
+    [Fact]
+    public async Task RepeatedSelfUpdateRestartExitStopsAfterBoundedVerificationAttempts()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var archive = CreateSteamCmdArchive();
+        using var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            StubHttpMessageHandler.Response(
+                HttpStatusCode.OK,
+                CreateBinaryContent(archive))));
+        using var httpClient = new HttpClient(handler);
+        var runner = new StubProcessRunner(new ProcessRunResult { ExitCode = 7 });
+        var steamCmdDirectory = temporaryDirectory.GetPath("steamcmd");
+        using var service = new SteamCmdService(httpClient, runner, steamCmdDirectory);
+
+        var result = await service.EnsureInstalledAsync();
+
+        Assert.Equal(OperationStatus.Failed, result.Status);
+        Assert.False(result.InstalledNow);
+        Assert.Contains("3 verification attempts", result.Error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(steamCmdDirectory, "steamcmd.exe")));
+        Assert.Equal(3, runner.CallCount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(7)]
+    public async Task VerificationFailsWhenExecutableDisappears(int exitCode)
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var archive = CreateSteamCmdArchive();
+        using var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            StubHttpMessageHandler.Response(
+                HttpStatusCode.OK,
+                CreateBinaryContent(archive))));
+        using var httpClient = new HttpClient(handler);
+        var steamCmdDirectory = temporaryDirectory.GetPath("steamcmd");
+        var executablePath = Path.Combine(steamCmdDirectory, "steamcmd.exe");
+        var runner = new StubProcessRunner((_, _) =>
+        {
+            File.Delete(executablePath);
+            return new ProcessRunResult { ExitCode = exitCode };
+        });
+        using var service = new SteamCmdService(httpClient, runner, steamCmdDirectory);
+
+        var result = await service.EnsureInstalledAsync();
+
+        Assert.Equal(OperationStatus.Failed, result.Status);
+        Assert.Contains("missing", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(executablePath));
+        Assert.Equal(1, runner.CallCount);
+    }
+
+    [Theory]
+    [InlineData(true, false, OperationStatus.Failed)]
+    [InlineData(false, true, OperationStatus.Cancelled)]
+    public async Task VerificationTimeoutAndCancellationAfterSelfUpdateFailWithoutFurtherRetrying(
+        bool timedOut,
+        bool cancelled,
+        OperationStatus expectedStatus)
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var archive = CreateSteamCmdArchive();
+        using var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            StubHttpMessageHandler.Response(
+                HttpStatusCode.OK,
+                CreateBinaryContent(archive))));
+        using var httpClient = new HttpClient(handler);
+        ProcessRunResult[] verificationResults =
+        [
+            new() { ExitCode = 7 },
+            new()
+            {
+                ExitCode = 7,
+                TimedOut = timedOut,
+                Cancelled = cancelled,
+            },
+        ];
+        var resultIndex = 0;
+        var runner = new StubProcessRunner((_, _) => verificationResults[resultIndex++]);
+        var steamCmdDirectory = temporaryDirectory.GetPath("steamcmd");
+        using var service = new SteamCmdService(httpClient, runner, steamCmdDirectory);
+
+        var result = await service.EnsureInstalledAsync();
+
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.False(File.Exists(Path.Combine(steamCmdDirectory, "steamcmd.exe")));
+        Assert.Equal(2, runner.CallCount);
+    }
+
+    [Fact]
+    public async Task VerificationLaunchFailureReturnsRetryableInstallationFailure()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var archive = CreateSteamCmdArchive();
+        using var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            StubHttpMessageHandler.Response(
+                HttpStatusCode.OK,
+                CreateBinaryContent(archive))));
+        using var httpClient = new HttpClient(handler);
+        var runner = new StubProcessRunner((_, _) =>
+            throw new System.ComponentModel.Win32Exception("The executable could not start."));
+        var steamCmdDirectory = temporaryDirectory.GetPath("steamcmd");
+        using var service = new SteamCmdService(httpClient, runner, steamCmdDirectory);
+
+        var result = await service.EnsureInstalledAsync();
+
+        Assert.Equal(OperationStatus.Failed, result.Status);
+        Assert.False(result.InstalledNow);
+        Assert.Contains("could not start", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(steamCmdDirectory, "steamcmd.exe")));
+        Assert.Equal(1, runner.CallCount);
+    }
+
+    [Fact]
     public async Task InvalidInstallerArchiveFailsWithoutLeavingAnExecutable()
     {
         using var temporaryDirectory = new TemporaryDirectory();
@@ -70,6 +211,7 @@ public sealed class SteamCmdServiceTests
 
         Assert.Equal(OperationStatus.Failed, result.Status);
         Assert.False(File.Exists(Path.Combine(steamCmdDirectory, "steamcmd.exe")));
+        Assert.Equal(1, runner.CallCount);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO.Compression;
 using StellarisDownloader.Core.Models;
 
@@ -6,6 +7,9 @@ namespace StellarisDownloader.Core.Services;
 public sealed class SteamCmdService : ISteamCmdService, IDisposable
 {
     public const int StellarisAppId = 281990;
+
+    private const int SelfUpdateRestartExitCode = 7;
+    private const int MaximumVerificationAttempts = 3;
 
     private static readonly Uri DefaultDownloadUri = new(
         "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip");
@@ -269,26 +273,59 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
                 Total: 2,
                 WorkshopId: null,
                 Message: "Verifying steamcmd.exe can start."));
-            var verification = await processRunner.RunAsync(
-                executablePath,
-                ["+quit"],
-                steamCmdDirectory,
-                TimeSpan.FromMinutes(5),
-                progress,
-                cancellationToken).ConfigureAwait(false);
-            if (verification.Cancelled || verification.TimedOut || verification.ExitCode != 0)
+            ProcessRunResult verification;
+            var verificationAttempt = 0;
+            while (true)
             {
-                File.Delete(executablePath);
-                var reason = verification.Cancelled
-                    ? "SteamCMD verification was cancelled."
-                    : verification.TimedOut
-                        ? "SteamCMD verification timed out."
-                        : $"steamcmd.exe exited with code {verification.ExitCode}.";
-                return new SteamCmdInstallationResult(
-                    verification.Cancelled ? OperationStatus.Cancelled : OperationStatus.Failed,
+                verificationAttempt++;
+                verification = await processRunner.RunAsync(
                     executablePath,
-                    InstalledNow: false,
-                    reason);
+                    ["+quit"],
+                    steamCmdDirectory,
+                    TimeSpan.FromMinutes(5),
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+                var executableExists = File.Exists(executablePath);
+                if (!verification.Cancelled
+                    && !verification.TimedOut
+                    && verification.ExitCode == 0
+                    && executableExists)
+                {
+                    break;
+                }
+
+                var canRetryAfterSelfUpdate = !verification.Cancelled
+                    && !verification.TimedOut
+                    && verification.ExitCode == SelfUpdateRestartExitCode
+                    && executableExists
+                    && verificationAttempt < MaximumVerificationAttempts;
+                if (!canRetryAfterSelfUpdate)
+                {
+                    File.Delete(executablePath);
+                    var reason = verification.Cancelled
+                        ? "SteamCMD verification was cancelled."
+                        : verification.TimedOut
+                            ? "SteamCMD verification timed out."
+                            : !executableExists
+                                ? "steamcmd.exe was missing after verification."
+                                : verification.ExitCode == SelfUpdateRestartExitCode
+                                    ? $"SteamCMD self-update did not settle after {MaximumVerificationAttempts} verification attempts."
+                                    : verification.ExitCode is int exitCode
+                                        ? $"steamcmd.exe exited with code {exitCode}."
+                                        : "steamcmd.exe exited without an exit code.";
+                    return new SteamCmdInstallationResult(
+                        verification.Cancelled ? OperationStatus.Cancelled : OperationStatus.Failed,
+                        executablePath,
+                        InstalledNow: false,
+                        reason);
+                }
+
+                progress?.Report(new OperationProgress(
+                    "InstallingSteamCmd",
+                    Completed: 1,
+                    Total: 2,
+                    WorkshopId: null,
+                    Message: $"SteamCMD updated itself; retrying verification ({verificationAttempt + 1}/{MaximumVerificationAttempts})."));
             }
 
             progress?.Report(new OperationProgress(
@@ -439,6 +476,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
             or InvalidDataException
             or UnauthorizedAccessException
             or InvalidOperationException
+            or Win32Exception
             or NotSupportedException;
 
     private static bool IsValidWorkshopId(string workshopId) =>
