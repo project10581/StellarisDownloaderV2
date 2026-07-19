@@ -34,7 +34,8 @@
                     Padding="12,6" />
         </StackPanel>
 
-        <DataGrid Grid.Row="1"
+        <DataGrid x:Name="UpdateGrid"
+                  Grid.Row="1"
                   ItemsSource="{Binding Items}"
                   AutoGenerateColumns="False"
                   CanUserAddRows="False"
@@ -69,7 +70,7 @@
                                     IsReadOnly="True"
                                     Width="170" />
                 <DataGridCheckBoxColumn Header="{DynamicResource Updates.Approximate}"
-                                        Binding="{Binding UsesApproximateLocalTimestamp}"
+                                        Binding="{Binding UsesApproximateLocalTimestamp, Mode=OneWay}"
                                         IsReadOnly="True"
                                         Width="145" />
                 <DataGridTextColumn Header="{DynamicResource Updates.Error}"

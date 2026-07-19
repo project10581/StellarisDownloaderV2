@@ -292,3 +292,14 @@ V1 自动测试未覆盖、V2 必须补齐的高风险区域：
 验证证据：工作区 Node 运行时对 `WorkshopBridge.js` 的语法检查通过；新增编译后 STA WPF 测试打开真实 `ContextMenu`，确认右键菜单引用与主 ViewModel/顶部栏相同的刷新和重扫命令，并且可用状态与命令一致。`dotnet format --verify-no-changes`、Release 构建和完整测试均通过，构建为 0 警告、0 错误，自动测试 221/221 通过。
 
 仍待动作时人工验收：Steam Community DOM 属于外部页面且会持续变化，新便携包仍需在首页横向卡片和热门/搜索网格各检查一次按钮唯一性、滚动定位、已安装/已排队状态和点击入队。普通 CI 不访问真实 Steam 页面；未来页面若取消可识别的缩略图媒体，应维护受限预览选择器，而不是恢复“对所有详情链接注入”的宽泛策略。
+
+## 19. 更新窗口闪退验收修正
+
+已完成：
+
+- dev.5 的实际运行日志和 Windows 应用程序事件确认，“检查模组更新”在显示更新选择窗口时崩溃。`DataGridCheckBoxColumn` 的 `CheckBox.IsChecked` 默认按双向方式绑定，但 `UsesApproximateLocalTimestamp` 是只读属性；列本身设置 `IsReadOnly=True` 不会把内部绑定自动改为单向。该列现在显式使用 `Mode=OneWay`。
+- 同一版本的 Windows 应用程序事件确认，“检查应用更新”在显示应用更新窗口时崩溃。`ProgressBar.Value` 默认按双向方式绑定，但 `ProgressPercentage` 是只读计算属性；进度绑定现在显式使用 `Mode=OneWay`。
+- 两处异常均发生在窗口完成布局、绑定尝试写回只读属性时，不是 Workshop API、GitHub 更新源或 Velopack 网络失败；对应 ViewModel 已分别处理服务调用异常。
+- 新增编译后 STA WPF 回归测试，分别实例化含有实际结果数据的两个生产窗口、离屏显示、等待 Dispatcher 完成布局并调用 `UpdateLayout()`；测试同时断言目标绑定为 `OneWay`，避免只检查 XAML 文本却漏过运行时绑定行为。
+
+验证证据：更新窗口定向渲染测试 4/4 通过；`dotnet format --verify-no-changes` 通过；Release 构建为 0 警告、0 错误；完整自动测试 223/223 通过。

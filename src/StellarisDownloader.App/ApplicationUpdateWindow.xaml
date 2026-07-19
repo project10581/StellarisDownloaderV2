@@ -51,9 +51,10 @@
         </GroupBox>
 
         <StackPanel Grid.Row="2" Margin="0,12,0,0">
-            <ProgressBar Minimum="0"
+            <ProgressBar x:Name="UpdateProgressBar"
+                         Minimum="0"
                          Maximum="100"
-                         Value="{Binding ProgressPercentage}"
+                         Value="{Binding ProgressPercentage, Mode=OneWay}"
                          Height="16" />
             <TextBlock Text="{Binding StatusMessage}"
                        Margin="0,7,0,0"

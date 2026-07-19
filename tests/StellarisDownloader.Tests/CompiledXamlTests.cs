@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Threading;
 using StellarisDownloader.App;
 using StellarisDownloader.App.ViewModels;
@@ -120,6 +121,78 @@ public sealed class CompiledXamlTests
         });
     }
 
+    [Fact]
+    public void UpdateSelectionWindowRendersReadOnlyApproximateColumn()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            var settings = new StubSettingsStore(new AppSettings
+            {
+                LibraryRoot = "C:\\Mods",
+            });
+            var operations = new WindowModOperationService();
+            using var viewModel = new UpdateSelectionViewModel(settings, operations);
+            await viewModel.CheckUpdatesAsync();
+            var window = new UpdateSelectionWindow(viewModel);
+
+            try
+            {
+                ShowOffscreen(window);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+
+                var grid = Assert.IsType<DataGrid>(window.FindName("UpdateGrid"));
+                var column = Assert.IsType<DataGridCheckBoxColumn>(grid.Columns[5]);
+                var binding = Assert.IsType<Binding>(column.Binding);
+                Assert.Equal(BindingMode.OneWay, binding.Mode);
+                Assert.Single(grid.Items);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void ApplicationUpdateWindowRendersReadOnlyProgress()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var viewModel = new ApplicationUpdateViewModel(new WindowAppUpdateService());
+            await viewModel.CheckAsync();
+            var window = new ApplicationUpdateWindow(viewModel, disposeViewModel: false);
+
+            try
+            {
+                ShowOffscreen(window);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+
+                var progressBar = Assert.IsType<ProgressBar>(
+                    window.FindName("UpdateProgressBar"));
+                var binding = Assert.IsType<Binding>(BindingOperations.GetBinding(
+                    progressBar,
+                    ProgressBar.ValueProperty));
+                Assert.Equal(BindingMode.OneWay, binding.Mode);
+                Assert.Equal(100, progressBar.Value);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static void ShowOffscreen(Window window)
+    {
+        window.WindowStartupLocation = WindowStartupLocation.Manual;
+        window.Left = -32000;
+        window.Top = -32000;
+        window.ShowInTaskbar = false;
+        window.Show();
+    }
+
     private static InvalidOperationException UnexpectedFactoryCall() =>
         new("The XAML load test must not open child windows.");
 
@@ -192,5 +265,97 @@ public sealed class CompiledXamlTests
 
         private static InvalidOperationException UnexpectedUpdateCall() =>
             new("The XAML load test must not contact the update service.");
+    }
+
+    private sealed class WindowModOperationService : IModOperationService
+    {
+        public Task<DownloadBatchResult> DownloadBatchAsync(
+            IReadOnlyCollection<DownloadRequest> requests,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw UnexpectedCall();
+
+        public Task<IReadOnlyList<UpdateCheckResult>> CheckUpdatesAsync(
+            string libraryRoot,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<UpdateCheckResult>>(
+            [
+                new UpdateCheckResult
+                {
+                    WorkshopId = "123456789",
+                    Title = "Approximate imported mod",
+                    State = UpdateState.UpdateAvailable,
+                    LatestRemoteUpdatedAtUtc = DateTimeOffset.UtcNow,
+                    InstalledWorkshopUpdatedAtUtc = DateTimeOffset.UtcNow.AddDays(-1),
+                    UsesApproximateLocalTimestamp = true,
+                },
+            ]);
+        }
+
+        public Task<DownloadBatchResult> UpdateSelectedAsync(
+            string libraryRoot,
+            IReadOnlyCollection<string> workshopIds,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw UnexpectedCall();
+
+        public Task<DeleteResult> DeleteAsync(
+            string libraryRoot,
+            string workshopId,
+            bool permanently,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw UnexpectedCall();
+
+        public Task<RedownloadResult> RedownloadAsync(
+            string libraryRoot,
+            string workshopId,
+            bool permanently,
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw UnexpectedCall();
+
+        private static InvalidOperationException UnexpectedCall() =>
+            new("The update-window XAML test must only check for mod updates.");
+    }
+
+    private sealed class WindowAppUpdateService : IAppUpdateService
+    {
+        public Task<AppUpdateInfo> CheckAsync(
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new OperationProgress(
+                "CheckingReleaseFeed",
+                Completed: 1,
+                Total: 1,
+                WorkshopId: null,
+                Message: "Release feed checked."));
+            return Task.FromResult(new AppUpdateInfo
+            {
+                CurrentVersion = "0.1.0-dev.5",
+                LatestVersion = "0.1.0-dev.6",
+                ReleaseNotes = "Window binding regression fixture.",
+                IsInstalled = true,
+                IsUpdateAvailable = true,
+            });
+        }
+
+        public Task<AppUpdateInfo> DownloadAsync(
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw UnexpectedCall();
+
+        public Task ApplyAndRestartAsync(
+            IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            throw UnexpectedCall();
+
+        private static InvalidOperationException UnexpectedCall() =>
+            new("The application-update XAML test must only check for updates.");
     }
 }
