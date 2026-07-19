@@ -1,3 +1,7 @@
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Threading;
 using StellarisDownloader.App;
 using StellarisDownloader.App.ViewModels;
 using StellarisDownloader.Core.Models;
@@ -45,6 +49,74 @@ public sealed class CompiledXamlTests
             window.DataContext = null;
             window.Content = null;
             return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public void MainWindowListContextMenuUsesSharedRefreshAndRescanCommands()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            var settings = new StubSettingsStore(new AppSettings());
+            using var repository = new SqliteModRepository(
+                Path.Combine(Path.GetTempPath(), $"xaml-menu-{Guid.NewGuid():N}.db"));
+            var operations = new UnexpectedModOperationService();
+            using var downloadQueue = new DownloadQueueViewModel(
+                settings,
+                new UnexpectedWorkshopClient(),
+                operations);
+            using var mainViewModel = new MainWindowViewModel(
+                settings,
+                repository,
+                new StubLibraryService(),
+                new StubPreviewImageService(),
+                operations,
+                downloadQueue);
+            using var updateViewModel = new ApplicationUpdateViewModel(
+                new UnexpectedAppUpdateService());
+
+            var window = new MainWindow(
+                mainViewModel,
+                downloadQueue,
+                updateViewModel,
+                () => throw UnexpectedFactoryCall(),
+                () => throw UnexpectedFactoryCall(),
+                () => throw UnexpectedFactoryCall(),
+                () => throw UnexpectedFactoryCall(),
+                () => throw UnexpectedFactoryCall());
+
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.Left = -32000;
+            window.Top = -32000;
+            window.ShowInTaskbar = false;
+            window.Show();
+            await Dispatcher.Yield(DispatcherPriority.Loaded);
+
+            var list = Assert.IsType<ListBox>(window.FindName("ModList"));
+            var contextMenu = Assert.IsType<ContextMenu>(list.ContextMenu);
+            contextMenu.PlacementTarget = list;
+            contextMenu.IsOpen = true;
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            contextMenu.GetBindingExpression(FrameworkElement.DataContextProperty)?.UpdateTarget();
+
+            var menuItems = contextMenu.Items.OfType<MenuItem>().ToArray();
+            var refreshItem = Assert.Single(
+                menuItems,
+                item => AutomationProperties.GetAutomationId(item) == "Library.Refresh");
+            var rescanItem = Assert.Single(
+                menuItems,
+                item => AutomationProperties.GetAutomationId(item) == "Library.Rescan");
+            refreshItem.GetBindingExpression(MenuItem.CommandProperty)?.UpdateTarget();
+            rescanItem.GetBindingExpression(MenuItem.CommandProperty)?.UpdateTarget();
+
+            Assert.Same(mainViewModel, contextMenu.DataContext);
+            Assert.Same(mainViewModel.RefreshCommand, refreshItem.Command);
+            Assert.Same(mainViewModel.RescanCommand, rescanItem.Command);
+            Assert.Equal(mainViewModel.RefreshCommand.CanExecute(null), refreshItem.IsEnabled);
+            Assert.Equal(mainViewModel.RescanCommand.CanExecute(null), rescanItem.IsEnabled);
+
+            contextMenu.IsOpen = false;
+            window.Close();
         });
     }
 

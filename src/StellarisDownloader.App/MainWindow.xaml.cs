@@ -173,12 +173,6 @@ public partial class MainWindow : Window
         OpenWithShell(uri.AbsoluteUri);
     }
 
-    private async void RefreshMenuItem_Click(object sender, RoutedEventArgs e) =>
-        await viewModel.RefreshAsync().ConfigureAwait(true);
-
-    private async void RescanMenuItem_Click(object sender, RoutedEventArgs e) =>
-        await viewModel.RescanAsync().ConfigureAwait(true);
-
     private void ModList_PreviewMouseRightButtonDown(
         object sender,
         MouseButtonEventArgs e)

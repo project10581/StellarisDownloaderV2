@@ -288,32 +288,34 @@
                              ScrollViewer.CanContentScroll="True"
                              BorderBrush="#22000000"
                              BorderThickness="1">
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="ContextMenu">
-                                    <Setter.Value>
-                                        <ContextMenu>
-                                            <MenuItem Header="{DynamicResource Command.Refresh}"
-                                                      Click="RefreshMenuItem_Click" />
-                                            <MenuItem Header="{DynamicResource Command.Rescan}"
-                                                      Click="RescanMenuItem_Click" />
-                                            <Separator />
-                                            <MenuItem Header="{DynamicResource Command.OpenFolder}"
-                                                      Click="OpenSelectedFolder_Click" />
-                                            <MenuItem Header="{DynamicResource Command.OpenWorkshop}"
-                                                      Click="OpenSelectedWorkshop_Click" />
-                                            <Separator />
-                                            <MenuItem Header="{DynamicResource Command.Delete}"
-                                                      Click="DeleteSelected_Click" />
-                                            <MenuItem Header="{DynamicResource Command.Redownload}"
-                                                      Click="RedownloadSelected_Click" />
-                                            <MenuItem Header="{DynamicResource Command.CheckModUpdates}"
-                                                      Click="CheckUpdatesButton_Click" />
-                                        </ContextMenu>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                        </ListBox.ItemContainerStyle>
+                        <ListBox.ContextMenu>
+                            <ContextMenu DataContext="{Binding PlacementTarget.DataContext,
+                                                               RelativeSource={RelativeSource Self}}">
+                                <MenuItem AutomationProperties.AutomationId="Library.Refresh"
+                                          Header="{DynamicResource Command.Refresh}"
+                                          Command="{Binding RefreshCommand}" />
+                                <MenuItem AutomationProperties.AutomationId="Library.Rescan"
+                                          Header="{DynamicResource Command.Rescan}"
+                                          Command="{Binding RescanCommand}" />
+                                <Separator />
+                                <MenuItem Header="{DynamicResource Command.OpenFolder}"
+                                          IsEnabled="{Binding HasSelection}"
+                                          Click="OpenSelectedFolder_Click" />
+                                <MenuItem Header="{DynamicResource Command.OpenWorkshop}"
+                                          IsEnabled="{Binding HasSelection}"
+                                          Click="OpenSelectedWorkshop_Click" />
+                                <Separator />
+                                <MenuItem Header="{DynamicResource Command.Delete}"
+                                          IsEnabled="{Binding CanModifySelectedMod}"
+                                          Click="DeleteSelected_Click" />
+                                <MenuItem Header="{DynamicResource Command.Redownload}"
+                                          IsEnabled="{Binding CanModifySelectedMod}"
+                                          Click="RedownloadSelected_Click" />
+                                <MenuItem Header="{DynamicResource Command.CheckModUpdates}"
+                                          IsEnabled="{Binding CanRunWriteOperations}"
+                                          Click="CheckUpdatesButton_Click" />
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type viewModels:ModListItemViewModel}">
                                 <TextBlock Text="{Binding DisplayTitle}"
