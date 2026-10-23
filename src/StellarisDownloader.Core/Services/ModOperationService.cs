@@ -488,6 +488,11 @@ public sealed class ModOperationService : IModOperationService
             Description = metadata?.Description ?? existing?.Description,
             PreviewUrl = metadata?.PreviewUrl ?? existing?.PreviewUrl,
             CreatorId = metadata?.CreatorId ?? existing?.CreatorId,
+            CreatorName = ModRecord.ResolveCreatorName(
+                metadata?.CreatorId,
+                metadata?.CreatorName,
+                existing?.CreatorId,
+                existing?.CreatorName),
             CreatedAtUtc = metadata?.CreatedAtUtc ?? existing?.CreatedAtUtc,
             ContentPath = result.ContentPath,
             FileSize = metadata?.FileSize ?? existing?.FileSize,

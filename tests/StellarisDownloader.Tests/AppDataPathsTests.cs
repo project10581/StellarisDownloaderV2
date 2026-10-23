@@ -18,6 +18,8 @@ public sealed class AppDataPathsTests
         Assert.True(Directory.Exists(paths.CacheDirectory));
         Assert.True(Directory.Exists(paths.PreviewCacheDirectory));
         Assert.True(Directory.Exists(paths.LogsDirectory));
+        Assert.True(Directory.Exists(paths.SnapshotsDirectory));
+        Assert.Equal(Path.Combine(root, "snapshots"), paths.SnapshotsDirectory);
         Assert.Equal(Path.Combine(root, "settings.json"), paths.SettingsFile);
         Assert.Equal(Path.Combine(root, "library.db"), paths.DatabaseFile);
         Assert.Empty(Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories));

@@ -8,7 +8,7 @@ namespace StellarisDownloader.Core.Persistence;
 
 public sealed class SqliteModRepository : IModRepository, IDisposable
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
 
     private const string CreateSchemaSql = """
         CREATE TABLE IF NOT EXISTS mods (
@@ -18,6 +18,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             description TEXT NULL,
             preview_url TEXT NULL,
             creator_id TEXT NULL,
+            creator_name TEXT NULL,
             created_at_utc TEXT NULL,
             content_path TEXT NOT NULL,
             file_size INTEGER NULL,
@@ -43,7 +44,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             library_root,
             is_stale,
             last_rebuilt_at_utc
-        ) VALUES (1, 1, NULL, 1, NULL);
+        ) VALUES (1, 2, NULL, 1, NULL);
         """;
 
     private const string SelectModsSql = """
@@ -53,6 +54,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
                description,
                preview_url,
                creator_id,
+               creator_name,
                created_at_utc,
                content_path,
                file_size,
@@ -73,6 +75,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             description,
             preview_url,
             creator_id,
+            creator_name,
             created_at_utc,
             content_path,
             file_size,
@@ -89,6 +92,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             $description,
             $preview_url,
             $creator_id,
+            $creator_name,
             $created_at_utc,
             $content_path,
             $file_size,
@@ -105,6 +109,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             description = excluded.description,
             preview_url = excluded.preview_url,
             creator_id = excluded.creator_id,
+            creator_name = excluded.creator_name,
             created_at_utc = excluded.created_at_utc,
             content_path = excluded.content_path,
             file_size = excluded.file_size,
@@ -158,6 +163,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             await using var command = connection.CreateCommand();
             command.CommandText = CreateSchemaSql;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await ApplyMigrationsAsync(connection, cancellationToken).ConfigureAwait(false);
 
             initialized = true;
         }
@@ -426,6 +432,70 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         }
     }
 
+    private static async Task ApplyMigrationsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var storedState = await ReadStoredCacheStateAsync(
+            connection,
+            cancellationToken).ConfigureAwait(false);
+        if (storedState.SchemaVersion > CurrentSchemaVersion || storedState.SchemaVersion < 1)
+        {
+            throw new InvalidDataException(
+                $"Unsupported cache schema version: {storedState.SchemaVersion}.");
+        }
+
+        var hasCreatorNameColumn = await HasModColumnAsync(
+            connection,
+            "creator_name",
+            cancellationToken).ConfigureAwait(false);
+        if (storedState.SchemaVersion == CurrentSchemaVersion && hasCreatorNameColumn)
+        {
+            return;
+        }
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken).ConfigureAwait(false);
+        if (!hasCreatorNameColumn)
+        {
+            await using var columnCommand = connection.CreateCommand();
+            columnCommand.Transaction = transaction;
+            columnCommand.CommandText = "ALTER TABLE mods ADD COLUMN creator_name TEXT NULL;";
+            await columnCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var stateCommand = connection.CreateCommand();
+        stateCommand.Transaction = transaction;
+        stateCommand.CommandText = """
+            UPDATE cache_state
+            SET schema_version = $schema_version
+            WHERE singleton_id = 1;
+            """;
+        stateCommand.Parameters.AddWithValue("$schema_version", CurrentSchemaVersion);
+        await stateCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> HasModColumnAsync(
+        SqliteConnection connection,
+        string columnName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(mods);";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static async Task UpsertModAsync(
         SqliteConnection connection,
         SqliteTransaction? transaction,
@@ -447,6 +517,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         command.Parameters.AddWithValue("$description", DatabaseValue(record.Description));
         command.Parameters.AddWithValue("$preview_url", DatabaseValue(record.PreviewUrl));
         command.Parameters.AddWithValue("$creator_id", DatabaseValue(record.CreatorId));
+        command.Parameters.AddWithValue("$creator_name", DatabaseValue(record.CreatorName));
         command.Parameters.AddWithValue("$created_at_utc", DatabaseValue(record.CreatedAtUtc));
         command.Parameters.AddWithValue("$content_path", record.ContentPath);
         command.Parameters.AddWithValue("$file_size", DatabaseValue(record.FileSize));
@@ -472,15 +543,16 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             Description = ReadNullableString(reader, 3),
             PreviewUrl = ReadNullableString(reader, 4),
             CreatorId = ReadNullableString(reader, 5),
-            CreatedAtUtc = ReadNullableTimestamp(reader, 6),
-            ContentPath = reader.GetString(7),
-            FileSize = reader.IsDBNull(8) ? null : reader.GetInt64(8),
-            ImportedOrDownloadedAtUtc = ParseTimestamp(reader.GetString(9)),
-            InstalledWorkshopUpdatedAtUtc = ReadNullableTimestamp(reader, 10),
-            LocalState = Enum.Parse<LocalModState>(reader.GetString(11), ignoreCase: false),
-            LastOperationStatus = Enum.Parse<OperationStatus>(reader.GetString(12), ignoreCase: false),
-            LastError = ReadNullableString(reader, 13),
-            LastScannedAtUtc = ParseTimestamp(reader.GetString(14)),
+            CreatorName = ReadNullableString(reader, 6),
+            CreatedAtUtc = ReadNullableTimestamp(reader, 7),
+            ContentPath = reader.GetString(8),
+            FileSize = reader.IsDBNull(9) ? null : reader.GetInt64(9),
+            ImportedOrDownloadedAtUtc = ParseTimestamp(reader.GetString(10)),
+            InstalledWorkshopUpdatedAtUtc = ReadNullableTimestamp(reader, 11),
+            LocalState = Enum.Parse<LocalModState>(reader.GetString(12), ignoreCase: false),
+            LastOperationStatus = Enum.Parse<OperationStatus>(reader.GetString(13), ignoreCase: false),
+            LastError = ReadNullableString(reader, 14),
+            LastScannedAtUtc = ParseTimestamp(reader.GetString(15)),
         };
     }
 
@@ -558,6 +630,11 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             Description = incoming.Description ?? cached.Description,
             PreviewUrl = incoming.PreviewUrl ?? cached.PreviewUrl,
             CreatorId = incoming.CreatorId ?? cached.CreatorId,
+            CreatorName = ModRecord.ResolveCreatorName(
+                incoming.CreatorId,
+                incoming.CreatorName,
+                cached.CreatorId,
+                cached.CreatorName),
             CreatedAtUtc = incoming.CreatedAtUtc ?? cached.CreatedAtUtc,
             FileSize = incoming.FileSize ?? cached.FileSize,
         };

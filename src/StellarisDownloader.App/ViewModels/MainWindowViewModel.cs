@@ -33,6 +33,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool isBusy;
     private bool canModifyLibrary;
     private bool refreshLibraryOnStartup;
+    private string? progressMessage;
     private string? lastError;
 
     public MainWindowViewModel(
@@ -57,6 +58,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         this.modOperationService = modOperationService;
         this.downloadQueue = downloadQueue;
         downloadQueue.PropertyChanged += OnDownloadQueuePropertyChanged;
+        downloadQueue.BatchCompleted += OnDownloadBatchCompletedAsync;
 
         ModsView = new ListCollectionView(items)
         {
@@ -131,6 +133,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref isBusy, value))
             {
                 OnPropertyChanged(nameof(CanRunWriteOperations));
+                OnPropertyChanged(nameof(CanManageSnapshots));
                 OnPropertyChanged(nameof(CanModifySelectedMod));
                 refreshCommand.NotifyCanExecuteChanged();
                 rescanCommand.NotifyCanExecuteChanged();
@@ -156,7 +159,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool CanRunWriteOperations => CanModifyLibrary && !IsBusy && !downloadQueue.IsBusy;
 
+    public bool CanManageSnapshots => !IsBusy && !downloadQueue.IsBusy;
+
     public bool CanModifySelectedMod => CanRunWriteOperations && HasSelection;
+
+    public string? ProgressMessage
+    {
+        get => progressMessage;
+        private set => SetProperty(ref progressMessage, value);
+    }
 
     public string? LastError
     {
@@ -222,12 +233,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         IsBusy = true;
         State = LibraryViewState.Loading;
+        ProgressMessage = null;
         LastError = null;
+        var progress = CreateOperationProgress();
         try
         {
             var junction = await libraryService.EnsureJunctionAsync(
                 libraryRoot,
-                cancellationToken: cancellationToken);
+                progress,
+                cancellationToken);
             if (junction.Status != OperationStatus.Succeeded)
             {
                 ClearItems();
@@ -237,7 +251,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            var result = await libraryService.ScanAsync(libraryRoot, cancellationToken: cancellationToken);
+            var result = await libraryService.ScanAsync(
+                libraryRoot,
+                progress,
+                cancellationToken);
             if (result.Status == OperationStatus.Succeeded)
             {
                 ReplaceItems(result.Records);
@@ -254,6 +271,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            ProgressMessage = null;
             IsBusy = false;
         }
     }
@@ -261,6 +279,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         downloadQueue.PropertyChanged -= OnDownloadQueuePropertyChanged;
+        downloadQueue.BatchCompleted -= OnDownloadBatchCompletedAsync;
         previewCancellation?.Cancel();
         previewCancellation?.Dispose();
         GC.SuppressFinalize(this);
@@ -271,7 +290,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private async Task RefreshLibraryStateAsync(CancellationToken cancellationToken)
     {
         State = LibraryViewState.Loading;
+        ProgressMessage = null;
         LastError = null;
+        var progress = CreateOperationProgress();
         try
         {
             var settings = await settingsStore.LoadAsync(cancellationToken);
@@ -287,7 +308,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             var junction = await libraryService.EnsureJunctionAsync(
                 libraryRoot,
-                cancellationToken: cancellationToken);
+                progress,
+                cancellationToken);
             if (junction.Status != OperationStatus.Succeeded)
             {
                 ClearItems();
@@ -321,6 +343,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CanModifyLibrary = false;
             LastError = exception.Message;
             State = LibraryViewState.Error;
+        }
+        finally
+        {
+            ProgressMessage = null;
         }
     }
 
@@ -425,9 +451,38 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (args.PropertyName == nameof(DownloadQueueViewModel.IsBusy))
         {
             OnPropertyChanged(nameof(CanRunWriteOperations));
+            OnPropertyChanged(nameof(CanManageSnapshots));
             OnPropertyChanged(nameof(CanModifySelectedMod));
             rescanCommand.NotifyCanExecuteChanged();
         }
+    }
+
+    private async Task OnDownloadBatchCompletedAsync()
+    {
+        if (!IsBusy)
+        {
+            await RefreshAsync();
+        }
+    }
+
+    private SynchronousProgress<OperationProgress> CreateOperationProgress() =>
+        new(UpdateOperationProgress);
+
+    private void UpdateOperationProgress(OperationProgress value)
+    {
+        if (string.IsNullOrWhiteSpace(value.Message))
+        {
+            return;
+        }
+
+        ProgressMessage = value.Total > 0
+            ? $"[{value.Completed}/{value.Total}] {value.Message}"
+            : value.Message;
+    }
+
+    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 
     private static string BuildRescanRequiredError(string? error) =>

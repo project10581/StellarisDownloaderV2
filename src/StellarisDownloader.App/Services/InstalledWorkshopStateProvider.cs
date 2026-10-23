@@ -78,15 +78,7 @@ public sealed class InstalledWorkshopStateProvider : IInstalledWorkshopStateProv
                 return false;
             }
 
-            var attributes = File.GetAttributes(expectedPath);
-            if ((attributes & FileAttributes.Directory) == 0
-                || (attributes & FileAttributes.ReparsePoint) != 0)
-            {
-                return false;
-            }
-
-            using var entries = Directory.EnumerateFileSystemEntries(expectedPath).GetEnumerator();
-            return entries.MoveNext();
+            return LocalModDirectoryScanner.IsRegularNonEmptyDirectory(expectedPath);
         }
         catch (Exception exception) when (IsPerItemFileOrPathException(exception))
         {

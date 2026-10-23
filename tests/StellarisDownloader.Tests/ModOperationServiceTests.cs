@@ -32,8 +32,16 @@ public sealed class ModOperationServiceTests
             },
             metadata: new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal)
             {
-                ["100"] = Metadata("100", "First", CompletionTime.AddDays(-1)),
-                ["200"] = Metadata("200", "Second", CompletionTime.AddDays(-2)),
+                ["100"] = Metadata("100", "First", CompletionTime.AddDays(-1)) with
+                {
+                    CreatorId = "76561198000000100",
+                    CreatorName = "First Author",
+                },
+                ["200"] = Metadata("200", "Second", CompletionTime.AddDays(-2)) with
+                {
+                    CreatorId = "76561198000000200",
+                    CreatorName = "Second Author",
+                },
             });
         await ExecuteNonQueryAsync(
             fixture.DatabasePath,
@@ -61,6 +69,7 @@ public sealed class ModOperationServiceTests
             "SELECT write_count FROM write_audit;"));
         var records = await fixture.Repository.ListAsync(fixture.LibraryRoot);
         Assert.Equal(["First", "Second"], records.Select(record => record.Title));
+        Assert.Equal(["First Author", "Second Author"], records.Select(record => record.CreatorName));
         Assert.All(records, record => Assert.Equal(CompletionTime, record.ImportedOrDownloadedAtUtc));
         Assert.Equal(fixture.LibraryRoot, fixture.Junction.State.TargetPath);
     }

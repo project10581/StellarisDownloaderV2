@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:controls="clr-namespace:StellarisDownloader.App.Controls"
         xmlns:viewModels="clr-namespace:StellarisDownloader.App.ViewModels"
         mc:Ignorable="d"
         Title="{DynamicResource App.Title}"
@@ -48,6 +49,11 @@
             <Button Style="{StaticResource ToolbarButton}"
                     Content="{DynamicResource Command.Rescan}"
                     Command="{Binding RescanCommand}" />
+            <Button Style="{StaticResource ToolbarButton}"
+                    AutomationProperties.AutomationId="Library.ModSnapshots"
+                    Content="{DynamicResource Snapshots.Title}"
+                    IsEnabled="{Binding CanManageSnapshots}"
+                    Click="ModSnapshots_Click" />
         </WrapPanel>
 
         <Border DockPanel.Dock="Bottom"
@@ -56,11 +62,15 @@
                 Background="#11000000"
                 CornerRadius="4">
             <Grid>
-                <TextBlock Text="{DynamicResource Status.Loading}">
+                <TextBlock x:Name="LoadingStatusText">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding ProgressMessage}" />
                             <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
+                                <DataTrigger Binding="{Binding ProgressMessage}" Value="{x:Null}">
+                                    <Setter Property="Text" Value="{DynamicResource Status.Loading}" />
+                                </DataTrigger>
                                 <DataTrigger Binding="{Binding State}"
                                              Value="{x:Static viewModels:LibraryViewState.Loading}">
                                     <Setter Property="Visibility" Value="Visible" />
@@ -182,11 +192,13 @@
 
                             <TextBlock Style="{StaticResource DetailLabel}"
                                        Text="{DynamicResource Detail.Author}" />
-                            <TextBlock Text="{Binding Record.CreatorId, TargetNullValue=—}" />
+                            <TextBlock x:Name="AuthorValueText"
+                                       Text="{Binding DisplayAuthor, Mode=OneWay}" />
 
                             <TextBlock Style="{StaticResource DetailLabel}"
                                        Text="{DynamicResource Detail.Size}" />
-                            <TextBlock Text="{Binding Record.FileSize, TargetNullValue=—, StringFormat={}{0:N0} bytes}" />
+                            <TextBlock x:Name="SizeValueText"
+                                       Text="{Binding DisplayFileSize, Mode=OneWay}" />
 
                             <TextBlock Style="{StaticResource DetailLabel}"
                                        Text="{DynamicResource Detail.RemoteUpdated}" />
@@ -198,28 +210,35 @@
 
                             <TextBlock Style="{StaticResource DetailLabel}"
                                        Text="{DynamicResource Detail.Workshop}" />
-                            <TextBlock Text="{Binding WorkshopUrl}" TextWrapping="Wrap" />
+                            <TextBlock TextWrapping="Wrap">
+                                <Hyperlink x:Name="WorkshopDetailLink"
+                                           AutomationProperties.AutomationId="Detail.OpenWorkshop"
+                                           IsEnabled="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=Window}}"
+                                           Click="OpenSelectedWorkshop_Click">
+                                    <Run Text="{Binding WorkshopUrl, Mode=OneWay}" />
+                                </Hyperlink>
+                            </TextBlock>
 
                             <TextBlock Style="{StaticResource DetailLabel}"
                                        Text="{DynamicResource Detail.LocalPath}" />
-                            <TextBlock Text="{Binding Record.ContentPath}" TextWrapping="Wrap" />
+                            <TextBlock TextWrapping="Wrap">
+                                <Hyperlink x:Name="LocalPathDetailLink"
+                                           AutomationProperties.AutomationId="Detail.OpenFolder"
+                                           IsEnabled="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=Window}}"
+                                           Click="OpenSelectedFolder_Click">
+                                    <Run Text="{Binding Record.ContentPath, Mode=OneWay}" />
+                                </Hyperlink>
+                            </TextBlock>
 
                             <TextBlock Style="{StaticResource DetailLabel}"
                                        Text="{DynamicResource Detail.Description}" />
-                            <TextBlock Text="{Binding Record.Description, TargetNullValue=—}"
-                                       TextWrapping="Wrap" />
+                            <controls:WorkshopDescriptionViewer x:Name="DescriptionViewer"
+                                                                Description="{Binding Record.Description, Mode=OneWay, TargetNullValue=—}"
+                                                                Background="Transparent"
+                                                                BorderThickness="0"
+                                                                Padding="0" />
 
                             <WrapPanel Margin="0,18,0,0">
-                                <Button Content="{DynamicResource Command.OpenFolder}"
-                                        IsEnabled="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        Click="OpenSelectedFolder_Click"
-                                        Padding="10,6"
-                                        Margin="0,0,8,8" />
-                                <Button Content="{DynamicResource Command.OpenWorkshop}"
-                                        IsEnabled="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        Click="OpenSelectedWorkshop_Click"
-                                        Padding="10,6"
-                                        Margin="0,0,8,8" />
                                 <Button Content="{DynamicResource Command.Delete}"
                                         IsEnabled="{Binding DataContext.CanModifySelectedMod, RelativeSource={RelativeSource AncestorType=Window}}"
                                         Click="DeleteSelected_Click"

@@ -6,6 +6,29 @@ namespace StellarisDownloader.Tests;
 public sealed class SteamCommunitySecurityPolicyTests
 {
     [Theory]
+    [InlineData("3387068412", "https://steamcommunity.com/sharedfiles/filedetails/?id=3387068412")]
+    [InlineData("  3387068412  ", "https://steamcommunity.com/sharedfiles/filedetails/?id=3387068412")]
+    [InlineData("https://steamcommunity.com/sharedfiles/filedetails/?id=123", "https://steamcommunity.com/sharedfiles/filedetails/?id=123")]
+    [InlineData("steamcommunity.com/workshop/browse/?appid=281990", "https://steamcommunity.com/workshop/browse/?appid=281990")]
+    public void AddressBarNavigationAcceptsWorkshopIdsAndTrustedSteamUrls(
+        string rawInput,
+        string expectedUrl)
+    {
+        Assert.True(SteamCommunitySecurityPolicy.TryResolveAddressBarTarget(rawInput, out var target));
+        Assert.Equal(expectedUrl, target.AbsoluteUri);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("https://example.com/")]
+    [InlineData("http://steamcommunity.com/workshop/")]
+    [InlineData("javascript:alert(1)")]
+    public void AddressBarNavigationRejectsUntrustedOrEmptyInputs(string rawInput)
+    {
+        Assert.False(SteamCommunitySecurityPolicy.TryResolveAddressBarTarget(rawInput, out _));
+    }
+    [Theory]
     [InlineData("https://steamcommunity.com/sharedfiles/filedetails/?id=123")]
     [InlineData("https://www.steamcommunity.com/workshop/")]
     [InlineData("https://sub.domain.steamcommunity.com/")]

@@ -14,6 +14,8 @@ public sealed record ModRecord
 
     public string? CreatorId { get; init; }
 
+    public string? CreatorName { get; init; }
+
     public DateTimeOffset? CreatedAtUtc { get; init; }
 
     public required string ContentPath { get; init; }
@@ -31,4 +33,21 @@ public sealed record ModRecord
     public string? LastError { get; init; }
 
     public required DateTimeOffset LastScannedAtUtc { get; init; }
+
+    public static string? ResolveCreatorName(
+        string? incomingCreatorId,
+        string? incomingCreatorName,
+        string? cachedCreatorId,
+        string? cachedCreatorName)
+    {
+        if (!string.IsNullOrWhiteSpace(incomingCreatorName))
+        {
+            return incomingCreatorName;
+        }
+
+        return incomingCreatorId is null
+            || string.Equals(incomingCreatorId, cachedCreatorId, StringComparison.Ordinal)
+                ? cachedCreatorName
+                : null;
+    }
 }

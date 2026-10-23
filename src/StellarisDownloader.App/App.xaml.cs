@@ -17,6 +17,7 @@ public partial class App : Application, IDisposable
     private SqliteModRepository? modRepository;
     private WriteOperationCoordinator? writeCoordinator;
     private HttpClient? httpClient;
+    private WorkshopClient? workshopClient;
     private SteamCmdService? steamCmdService;
     private DownloadQueueViewModel? downloadQueueViewModel;
     private AppUpdateService? appUpdateService;
@@ -44,7 +45,7 @@ public partial class App : Application, IDisposable
 
             writeCoordinator = new WriteOperationCoordinator();
             httpClient = new HttpClient();
-            var workshopClient = new WorkshopClient(httpClient);
+            workshopClient = new WorkshopClient(httpClient);
             var junctionPath = Path.Combine(
                 paths.SteamCmdDirectory,
                 "steamapps",
@@ -123,6 +124,11 @@ public partial class App : Application, IDisposable
             UpdateSelectionWindow CreateUpdateWindow() =>
                 new(new UpdateSelectionViewModel(settingsStore, modOperationService));
 
+            var snapshotService = new ModSnapshotService(settingsStore, modRepository, writeCoordinator);
+            var snapshotHistory = new ModSnapshotHistory(paths.SnapshotsDirectory);
+            ModSnapshotsWindow CreateSnapshotsWindow() =>
+                new(new ModSnapshotsViewModel(snapshotService, snapshotHistory, key => TryFindResource(key) as string ?? key));
+
             MainWindow? mainWindow = null;
             Task PrepareForAppUpdateRestartAsync()
             {
@@ -157,7 +163,8 @@ public partial class App : Application, IDisposable
                     downloadQueueViewModel,
                     installedStateProvider),
                 CreateUpdateWindow,
-                CreateApplicationUpdateWindow);
+                CreateApplicationUpdateWindow,
+                CreateSnapshotsWindow);
             MainWindow = mainWindow;
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -242,6 +249,7 @@ public partial class App : Application, IDisposable
         appUpdateService?.Dispose();
         downloadQueueViewModel?.Dispose();
         steamCmdService?.Dispose();
+        workshopClient?.Dispose();
         httpClient?.Dispose();
         writeCoordinator?.Dispose();
         modRepository?.Dispose();
@@ -250,6 +258,7 @@ public partial class App : Application, IDisposable
         appUpdateService = null;
         downloadQueueViewModel = null;
         steamCmdService = null;
+        workshopClient = null;
         httpClient = null;
         writeCoordinator = null;
         modRepository = null;

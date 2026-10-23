@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly Func<WorkshopBrowserWindow> browserWindowFactory;
     private readonly Func<UpdateSelectionWindow> updateWindowFactory;
     private readonly Func<ApplicationUpdateWindow> applicationUpdateWindowFactory;
+    private readonly Func<ModSnapshotsWindow> snapshotsWindowFactory;
     private DownloadQueueWindow? downloadWindow;
     private WorkshopBrowserWindow? browserWindow;
 
@@ -31,7 +32,8 @@ public partial class MainWindow : Window
         Func<DownloadQueueWindow> downloadWindowFactory,
         Func<WorkshopBrowserWindow> browserWindowFactory,
         Func<UpdateSelectionWindow> updateWindowFactory,
-        Func<ApplicationUpdateWindow> applicationUpdateWindowFactory)
+        Func<ApplicationUpdateWindow> applicationUpdateWindowFactory,
+        Func<ModSnapshotsWindow> snapshotsWindowFactory)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(downloadQueueViewModel);
@@ -41,6 +43,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(browserWindowFactory);
         ArgumentNullException.ThrowIfNull(updateWindowFactory);
         ArgumentNullException.ThrowIfNull(applicationUpdateWindowFactory);
+        ArgumentNullException.ThrowIfNull(snapshotsWindowFactory);
         InitializeComponent();
         this.viewModel = viewModel;
         this.downloadQueueViewModel = downloadQueueViewModel;
@@ -50,12 +53,25 @@ public partial class MainWindow : Window
         this.browserWindowFactory = browserWindowFactory;
         this.updateWindowFactory = updateWindowFactory;
         this.applicationUpdateWindowFactory = applicationUpdateWindowFactory;
+        this.snapshotsWindowFactory = snapshotsWindowFactory;
         DataContext = viewModel;
     }
 
     private void DownloadModsButton_Click(object sender, RoutedEventArgs e)
     {
         ShowDownloadWindow();
+    }
+
+    private void ModSnapshots_Click(object sender, RoutedEventArgs e)
+    {
+        if (!viewModel.CanManageSnapshots)
+        {
+            return;
+        }
+
+        var window = snapshotsWindowFactory();
+        window.Owner = this;
+        window.ShowDialog();
     }
 
     private void ShowDownloadWindow()

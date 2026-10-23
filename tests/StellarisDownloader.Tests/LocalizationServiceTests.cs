@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using StellarisDownloader.App.Services;
 using StellarisDownloader.Core.Models;
@@ -59,23 +60,16 @@ public sealed class LocalizationServiceTests
         var exceptions = new ConcurrentQueue<Exception>();
         var thread = new Thread(() =>
         {
-            Application? application = null;
             try
             {
-                if (Application.Current is null)
-                {
-                    application = new Application();
-                }
-
+                // Register WPF resource handling without creating and shutting down the
+                // process-wide Application, which tears down other STA window tests.
+                RuntimeHelpers.RunClassConstructor(typeof(Application).TypeHandle);
                 action();
             }
             catch (Exception exception)
             {
                 exceptions.Enqueue(exception);
-            }
-            finally
-            {
-                application?.Shutdown();
             }
         });
         thread.SetApartmentState(ApartmentState.STA);

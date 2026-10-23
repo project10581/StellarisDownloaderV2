@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Input;
 using Microsoft.Data.Sqlite;
 using Microsoft.Web.WebView2.Core;
 using StellarisDownloader.App.Models;
@@ -324,6 +325,20 @@ public partial class WorkshopBrowserWindow : Window
         if (browserInitialized)
         {
             WorkshopWebView.CoreWebView2.Reload();
+        }
+    }
+
+    private void CurrentUrlText_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || !browserInitialized)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (SteamCommunitySecurityPolicy.TryResolveAddressBarTarget(CurrentUrlText.Text, out var target))
+        {
+            WorkshopWebView.CoreWebView2.Navigate(target.AbsoluteUri);
         }
     }
 

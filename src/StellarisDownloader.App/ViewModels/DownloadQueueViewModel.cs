@@ -38,6 +38,8 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
     private string? lastError;
     private bool disposed;
 
+    internal event Func<Task>? BatchCompleted;
+
     public DownloadQueueViewModel(
         ISettingsStore settingsStore,
         IWorkshopClient workshopClient,
@@ -341,6 +343,14 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
                 RecalculateCounts();
                 NotifyQueueStateChanged();
             }).ConfigureAwait(false);
+            if (!disposed && batchResult is not null && BatchCompleted is { } batchCompleted)
+            {
+                foreach (var handler in batchCompleted.GetInvocationList().Cast<Func<Task>>())
+                {
+                    await InvokeOnUiAsync(handler).ConfigureAwait(false);
+                }
+            }
+
             cancellation.Dispose();
         }
     }
@@ -609,6 +619,31 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
             action();
             return true;
         });
+
+    private Task InvokeOnUiAsync(Func<Task> action)
+    {
+        if (Environment.CurrentManagedThreadId == uiThreadId)
+        {
+            return action();
+        }
+
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        uiContext.Post(
+            async _ =>
+            {
+                try
+                {
+                    await action().ConfigureAwait(false);
+                    completion.SetResult();
+                }
+                catch (Exception exception)
+                {
+                    completion.SetException(exception);
+                }
+            },
+            state: null);
+        return completion.Task;
+    }
 
     private Task<T> InvokeOnUiAsync<T>(Func<T> action)
     {

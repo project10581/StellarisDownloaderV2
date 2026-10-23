@@ -33,6 +33,16 @@ The script publishes a self-contained `win-x64` application with single-file pub
 
 The manual `Package portable release` Actions workflow runs the normal CI gates and uploads the Portable ZIP, nupkg files and update feeds as a development artifact. It does not create a GitHub Release. Code signing is deliberately disabled until a certificate is configured, so current packages are unsigned.
 
+## Save and compare mod lists
+
+Open **Mod lists / Compare** in the main window:
+
+1. Choose **Save current version**. Each save creates a separate JSON snapshot under `%LOCALAPPDATA%\StellarisDownloaderV2\snapshots\`; previous versions are retained, including saves with identical timestamps.
+2. Choose an old version on the left and the current library or another saved version on the right, then click **Compare selected versions**. Both lists remain complete: missing mods are pinned at the top of the old list in red, and added mods at the top of the new list in green. Each side preserves its own mod names.
+3. **Export JSON / TXT copy** and **Export comparison report** default to the `snapshots\exports\` subfolder. Saved history cannot be overwritten by these exports. **Compare two list files** also accepts snapshots saved elsewhere. You can copy missing IDs from the comparison.
+
+Capturing a version or exporting the current library scans the entire selected library on disk, independent of search filters. Cached names are optional and no Workshop connection is needed. Empty numeric folders and directory links are excluded and reported separately. A retained ID means the mod is present in both lists; file contents, versions, launcher enablement, and load order are not compared. Snapshot files contain the source library path and capture time and survive cache rebuilds and application restarts. History is ordered newest first; unreadable files are reported and kept on disk.
+
 ## Repository structure
 
 ```text

@@ -1,10 +1,47 @@
+using System.Diagnostics.CodeAnalysis;
 using StellarisDownloader.App.Models;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.Services;
 
 public static class SteamCommunitySecurityPolicy
 {
     private const string TrustedHost = "steamcommunity.com";
+
+    public static bool TryResolveAddressBarTarget(
+        string? rawInput,
+        [NotNullWhen(true)] out Uri? target)
+    {
+        var trimmed = rawInput?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            target = null;
+            return false;
+        }
+
+        if (WorkshopIdParser.TryParse(trimmed, out var workshopId, out _))
+        {
+            target = new Uri($"https://steamcommunity.com/sharedfiles/filedetails/?id={workshopId}");
+            return true;
+        }
+
+        var candidateText = trimmed.StartsWith("steamcommunity.com/", StringComparison.OrdinalIgnoreCase)
+            ? $"https://{trimmed}"
+            : trimmed;
+        if (Uri.TryCreate(candidateText, UriKind.Absolute, out var candidateUri))
+        {
+            var decision = DecideNavigation(candidateUri);
+            if (decision.Disposition == BrowserNavigationDisposition.OpenInWebView
+                && decision.Target is not null)
+            {
+                target = decision.Target;
+                return true;
+            }
+        }
+
+        target = null;
+        return false;
+    }
 
     public static bool IsTrustedMessageSource(Uri? source) =>
         source is not null

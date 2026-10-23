@@ -13,6 +13,8 @@ internal sealed class StubLibraryService : ILibraryService
 
     public TaskCompletionSource<LibraryScanResult>? PendingScan { get; set; }
 
+    public Action<IProgress<OperationProgress>?>? ScanProgressCallback { get; set; }
+
     public LibrarySwitchResult? SwitchResult { get; set; }
 
     public JunctionEnsureResult? JunctionResult { get; set; }
@@ -58,6 +60,7 @@ internal sealed class StubLibraryService : ILibraryService
     {
         cancellationToken.ThrowIfCancellationRequested();
         ScanCount++;
+        ScanProgressCallback?.Invoke(progress);
         if (PendingScan is not null)
         {
             return PendingScan.Task;

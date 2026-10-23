@@ -14,6 +14,8 @@ public sealed record WorkshopMetadata
 
     public string? CreatorId { get; init; }
 
+    public string? CreatorName { get; init; }
+
     public DateTimeOffset? CreatedAtUtc { get; init; }
 
     public DateTimeOffset? LatestRemoteUpdatedAtUtc { get; init; }

@@ -78,6 +78,7 @@ public sealed class LibraryServiceTests
         await CreateNonEmptyDirectoryAsync(root, "100");
         await CreateNonEmptyDirectoryAsync(root, "200");
         await CreateNonEmptyDirectoryAsync(root, "300");
+        await CreateNonEmptyDirectoryAsync(root, "400");
         var newImportTimestamp = new DateTime(2024, 2, 3, 4, 5, 6, DateTimeKind.Utc);
         Directory.SetLastWriteTimeUtc(Path.Combine(root, "300"), newImportTimestamp);
 
@@ -87,6 +88,8 @@ public sealed class LibraryServiceTests
         {
             Title = "Cached title",
             Description = "Cached description",
+            CreatorId = "old-fresh-creator",
+            CreatorName = "Cached Author",
             FileSize = 10,
             ImportedOrDownloadedAtUtc = importedAtUtc,
             InstalledWorkshopUpdatedAtUtc = installedWorkshopUpdatedAtUtc,
@@ -99,14 +102,20 @@ public sealed class LibraryServiceTests
             Description = "Fallback description",
             PreviewUrl = "https://example.test/old-preview.jpg",
             CreatorId = "old-creator",
+            CreatorName = "Fallback Author",
             CreatedAtUtc = TestTime.AddYears(-1),
             FileSize = 20,
+        };
+        var existingWithChangedCreator = CreateRecord(root, "400") with
+        {
+            CreatorId = "old-creator-id",
+            CreatorName = "Must not leak",
         };
         using var repository = new SqliteModRepository(temporaryDirectory.GetPath("library.db"));
         await repository.InitializeAsync();
         await repository.ReplaceSnapshotAsync(
             root,
-            [existingWithFreshMetadata, existingWithFailedMetadata],
+            [existingWithFreshMetadata, existingWithFailedMetadata, existingWithChangedCreator],
             TestTime);
         await repository.MarkCacheStaleAsync();
         var workshopClient = new StubWorkshopClient(new Dictionary<string, WorkshopMetadata>
@@ -118,8 +127,14 @@ public sealed class LibraryServiceTests
                 Description = "Remote description",
                 PreviewUrl = "https://example.test/new-preview.jpg",
                 CreatorId = "new-creator",
+                CreatorName = "Remote Author",
                 CreatedAtUtc = TestTime.AddYears(-2),
                 FileSize = 30,
+            },
+            ["400"] = new WorkshopMetadata
+            {
+                WorkshopId = "400",
+                CreatorId = "new-creator-id",
             },
         });
         var settings = new StubSettingsStore(new AppSettings { LibraryRoot = root });
@@ -139,12 +154,13 @@ public sealed class LibraryServiceTests
 
         Assert.Equal(OperationStatus.Succeeded, result.Status);
         Assert.Equal(1, workshopClient.CallCount);
-        Assert.Equal(["100", "200", "300"], workshopClient.LastRequestedIds);
+        Assert.Equal(["100", "200", "300", "400"], workshopClient.LastRequestedIds);
         var refreshed = Assert.Single(result.Records, record => record.WorkshopId == "100");
         Assert.Equal("Remote title", refreshed.Title);
         Assert.Equal("Remote description", refreshed.Description);
         Assert.Equal("https://example.test/new-preview.jpg", refreshed.PreviewUrl);
         Assert.Equal("new-creator", refreshed.CreatorId);
+        Assert.Equal("Remote Author", refreshed.CreatorName);
         Assert.Equal(TestTime.AddYears(-2), refreshed.CreatedAtUtc);
         Assert.Equal(30, refreshed.FileSize);
         Assert.Equal(importedAtUtc, refreshed.ImportedOrDownloadedAtUtc);
@@ -157,6 +173,7 @@ public sealed class LibraryServiceTests
         Assert.Equal("Fallback description", fallback.Description);
         Assert.Equal("https://example.test/old-preview.jpg", fallback.PreviewUrl);
         Assert.Equal("old-creator", fallback.CreatorId);
+        Assert.Equal("Fallback Author", fallback.CreatorName);
         Assert.Equal(TestTime.AddYears(-1), fallback.CreatedAtUtc);
         Assert.Equal(20, fallback.FileSize);
 
@@ -167,6 +184,10 @@ public sealed class LibraryServiceTests
         Assert.Null(imported.InstalledWorkshopUpdatedAtUtc);
         Assert.Equal(OperationStatus.Succeeded, imported.LastOperationStatus);
         Assert.Null(imported.LastError);
+
+        var changedCreator = Assert.Single(result.Records, record => record.WorkshopId == "400");
+        Assert.Equal("new-creator-id", changedCreator.CreatorId);
+        Assert.Null(changedCreator.CreatorName);
 
         var persisted = await repository.ListAsync(root);
         Assert.Equal(result.Records, persisted);

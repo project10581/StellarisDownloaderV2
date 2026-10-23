@@ -119,6 +119,7 @@ public sealed class MainWindowViewModelTests
 
             Assert.True(fixture.ViewModel.IsBusy);
             Assert.False(fixture.ViewModel.CanRunWriteOperations);
+            Assert.False(fixture.ViewModel.CanManageSnapshots);
             Assert.False(fixture.ViewModel.RescanCommand.CanExecute(null));
 
             completion.SetResult(new LibraryScanResult
@@ -131,6 +132,7 @@ public sealed class MainWindowViewModelTests
 
             Assert.False(fixture.ViewModel.IsBusy);
             Assert.True(fixture.ViewModel.CanRunWriteOperations);
+            Assert.True(fixture.ViewModel.CanManageSnapshots);
         });
     }
 
@@ -374,6 +376,79 @@ public sealed class MainWindowViewModelTests
             });
             await queueRun;
             Assert.True(fixture.ViewModel.CanModifySelectedMod);
+        });
+    }
+
+    [Fact]
+    public void CompletedDownloadBatchAutomaticallyRefreshesTheMainWindowLibrary()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            Assert.Equal(3, VisibleItems(fixture.ViewModel).Count);
+
+            fixture.Operations.DownloadHandler = async (requests, _, token) =>
+            {
+                var request = Assert.Single(requests);
+                await fixture.Repository.UpsertFinalResultAsync(
+                    fixture.LibraryRoot,
+                    CreateRecord(request.WorkshopId, "Downloaded Mod", 500, remoteOffset: 5, downloadOffset: 5, withPreview: false),
+                    token);
+                return new DownloadBatchResult
+                {
+                    Results =
+                    [
+                        new DownloadResult
+                        {
+                            WorkshopId = request.WorkshopId,
+                            Status = OperationStatus.Succeeded,
+                            ContentPath = Path.Combine(fixture.LibraryRoot, request.WorkshopId),
+                        },
+                    ],
+                };
+            };
+
+            await fixture.DownloadQueue.EnqueueAsync("900");
+            await fixture.DownloadQueue.StartAsync();
+
+            var ids = VisibleItems(fixture.ViewModel).Select(item => item.WorkshopId).ToArray();
+            Assert.Contains("900", ids);
+            Assert.Equal(4, ids.Length);
+        });
+    }
+
+    [Fact]
+    public void RescanUpdatesProgressMessageDuringOperationAndClearsItOnCompletion()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            var completion = new TaskCompletionSource<LibraryScanResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            fixture.Library.PendingScan = completion;
+            fixture.Library.ScanProgressCallback = progress =>
+                progress?.Report(new OperationProgress(
+                    "ScanningLocalDescriptors",
+                    Completed: 1,
+                    Total: 3,
+                    WorkshopId: "100",
+                    Message: "Scanning local mod 1 of 3."));
+
+            var scanTask = fixture.ViewModel.RescanAsync();
+
+            Assert.Equal("[1/3] Scanning local mod 1 of 3.", fixture.ViewModel.ProgressMessage);
+
+            completion.SetResult(new LibraryScanResult
+            {
+                Status = OperationStatus.Succeeded,
+                LibraryRoot = fixture.LibraryRoot,
+                Records = CreateRecords(),
+            });
+            await scanTask;
+
+            Assert.Null(fixture.ViewModel.ProgressMessage);
         });
     }
 

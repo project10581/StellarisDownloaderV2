@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
@@ -21,7 +22,7 @@ public sealed class SqliteModRepositoryTests
         Assert.Equal(1L, await ExecuteScalarInt64Async(databasePath, "SELECT COUNT(*) FROM cache_state;"));
         var state = await repository.GetCacheStateAsync(expectedLibraryRoot: null);
         Assert.Equal(CacheState.Stale, state.State);
-        Assert.Equal(1, state.SchemaVersion);
+        Assert.Equal(2, state.SchemaVersion);
     }
 
     [Fact]
@@ -32,7 +33,11 @@ public sealed class SqliteModRepositoryTests
         var root = temporaryDirectory.GetPath("library");
         using var repository = new SqliteModRepository(databasePath);
         await repository.InitializeAsync();
-        var first = CreateRecord(root, "100", "First");
+        var first = CreateRecord(root, "100", "First") with
+        {
+            CreatorId = "42",
+            CreatorName = "First Author",
+        };
 
         await repository.ReplaceSnapshotAsync(root, [first], TestTime);
 
@@ -87,6 +92,7 @@ public sealed class SqliteModRepositoryTests
             Description = "Cached description",
             PreviewUrl = "https://example.invalid/preview.png",
             CreatorId = "42",
+            CreatorName = "Cached Author",
             CreatedAtUtc = TestTime.AddYears(-1),
             FileSize = 456,
             ImportedOrDownloadedAtUtc = TestTime.AddDays(-10),
@@ -100,6 +106,7 @@ public sealed class SqliteModRepositoryTests
             Description = null,
             PreviewUrl = null,
             CreatorId = null,
+            CreatorName = null,
             CreatedAtUtc = null,
             FileSize = null,
             ImportedOrDownloadedAtUtc = TestTime.AddHours(1),
@@ -118,6 +125,7 @@ public sealed class SqliteModRepositoryTests
         Assert.Equal(cached.Description, result.Description);
         Assert.Equal(cached.PreviewUrl, result.PreviewUrl);
         Assert.Equal(cached.CreatorId, result.CreatorId);
+        Assert.Equal(cached.CreatorName, result.CreatorName);
         Assert.Equal(cached.CreatedAtUtc, result.CreatedAtUtc);
         Assert.Equal(cached.FileSize, result.FileSize);
         Assert.Equal(cached.ImportedOrDownloadedAtUtc, result.ImportedOrDownloadedAtUtc);
@@ -139,6 +147,8 @@ public sealed class SqliteModRepositoryTests
         var cached = CreateRecord(oldRoot, "100", "Cached title") with
         {
             Description = "Cached description",
+            CreatorId = "42",
+            CreatorName = "Cached Author",
             FileSize = 456,
             ImportedOrDownloadedAtUtc = TestTime.AddDays(-10),
             InstalledWorkshopUpdatedAtUtc = TestTime.AddDays(-5),
@@ -150,6 +160,8 @@ public sealed class SqliteModRepositoryTests
         var scanned = CreateRecord(newRoot, "100", title: null) with
         {
             Description = null,
+            CreatorId = null,
+            CreatorName = null,
             FileSize = null,
             ImportedOrDownloadedAtUtc = importedAtUtc,
             InstalledWorkshopUpdatedAtUtc = null,
@@ -165,12 +177,42 @@ public sealed class SqliteModRepositoryTests
         Assert.NotNull(result);
         Assert.Equal(cached.Title, result.Title);
         Assert.Equal(cached.Description, result.Description);
+        Assert.Equal(cached.CreatorId, result.CreatorId);
+        Assert.Equal(cached.CreatorName, result.CreatorName);
         Assert.Equal(cached.FileSize, result.FileSize);
         Assert.Equal(importedAtUtc, result.ImportedOrDownloadedAtUtc);
         Assert.Null(result.InstalledWorkshopUpdatedAtUtc);
         Assert.Equal(OperationStatus.Succeeded, result.LastOperationStatus);
         Assert.Null(result.LastError);
         Assert.Equal(Path.Combine(newRoot, "100"), result.ContentPath);
+    }
+
+    [Fact]
+    public async Task SnapshotDoesNotReuseAuthorNameAfterCreatorChanges()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var databasePath = temporaryDirectory.GetPath("library.db");
+        var root = temporaryDirectory.GetPath("library");
+        using var repository = new SqliteModRepository(databasePath);
+        await repository.InitializeAsync();
+        var cached = CreateRecord(root, "100", "Cached") with
+        {
+            CreatorId = "76561198000000001",
+            CreatorName = "Old Author",
+        };
+        await repository.ReplaceSnapshotAsync(root, [cached], TestTime);
+        var refreshed = CreateRecord(root, "100", "Refreshed") with
+        {
+            CreatorId = "76561198000000002",
+            CreatorName = null,
+        };
+
+        await repository.ReplaceSnapshotAsync(root, [refreshed], TestTime.AddMinutes(1));
+
+        var result = await repository.GetAsync(root, "100");
+        Assert.NotNull(result);
+        Assert.Equal("76561198000000002", result.CreatorId);
+        Assert.Null(result.CreatorName);
     }
 
     [Fact]
@@ -236,6 +278,38 @@ public sealed class SqliteModRepositoryTests
         Assert.Equal(1L, await ExecuteScalarInt64Async(databasePath, "SELECT write_count FROM write_audit;"));
     }
 
+    [Fact]
+    public async Task InitializeMigratesVersionOneDatabaseWithoutLosingRows()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var databasePath = temporaryDirectory.GetPath("library.db");
+        var root = temporaryDirectory.GetPath("library");
+        await CreateVersionOneDatabaseAsync(databasePath, root);
+        using var repository = new SqliteModRepository(databasePath);
+
+        await repository.InitializeAsync();
+        await repository.InitializeAsync();
+
+        var state = await repository.GetCacheStateAsync(root);
+        Assert.Equal(2, state.SchemaVersion);
+        Assert.Equal(CacheState.Valid, state.State);
+        Assert.Equal(
+            1L,
+            await ExecuteScalarInt64Async(
+                databasePath,
+                "SELECT COUNT(*) FROM pragma_table_info('mods') WHERE name = 'creator_name';"));
+        var migrated = await repository.GetAsync(root, "100");
+        Assert.NotNull(migrated);
+        Assert.Equal("Version one title", migrated.Title);
+        Assert.Equal("76561198000000001", migrated.CreatorId);
+        Assert.Null(migrated.CreatorName);
+
+        var enriched = migrated with { CreatorName = "Migrated Author" };
+        await repository.UpsertFinalResultAsync(root, enriched);
+
+        Assert.Equal(enriched, await repository.GetAsync(root, "100"));
+    }
+
     private static ModRecord CreateRecord(string root, string workshopId, string? title)
     {
         return new ModRecord
@@ -256,6 +330,74 @@ public sealed class SqliteModRepositoryTests
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = commandText;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task CreateVersionOneDatabaseAsync(string databasePath, string root)
+    {
+        await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE mods (
+                workshop_id TEXT NOT NULL PRIMARY KEY,
+                app_id INTEGER NOT NULL,
+                title TEXT NULL,
+                description TEXT NULL,
+                preview_url TEXT NULL,
+                creator_id TEXT NULL,
+                created_at_utc TEXT NULL,
+                content_path TEXT NOT NULL,
+                file_size INTEGER NULL,
+                imported_or_downloaded_at_utc TEXT NOT NULL,
+                installed_workshop_updated_at_utc TEXT NULL,
+                local_state TEXT NOT NULL,
+                last_operation_status TEXT NOT NULL,
+                last_error TEXT NULL,
+                last_scanned_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE cache_state (
+                singleton_id INTEGER NOT NULL PRIMARY KEY CHECK (singleton_id = 1),
+                schema_version INTEGER NOT NULL,
+                library_root TEXT NULL,
+                is_stale INTEGER NOT NULL CHECK (is_stale IN (0, 1)),
+                last_rebuilt_at_utc TEXT NULL
+            );
+
+            INSERT INTO mods (
+                workshop_id,
+                app_id,
+                title,
+                creator_id,
+                content_path,
+                imported_or_downloaded_at_utc,
+                local_state,
+                last_operation_status,
+                last_scanned_at_utc
+            ) VALUES (
+                '100',
+                281990,
+                'Version one title',
+                '76561198000000001',
+                $content_path,
+                $timestamp,
+                'Available',
+                'Succeeded',
+                $timestamp
+            );
+
+            INSERT INTO cache_state (
+                singleton_id,
+                schema_version,
+                library_root,
+                is_stale,
+                last_rebuilt_at_utc
+            ) VALUES (1, 1, $library_root, 0, $timestamp);
+            """;
+        command.Parameters.AddWithValue("$content_path", Path.Combine(root, "100"));
+        command.Parameters.AddWithValue("$library_root", Path.GetFullPath(root));
+        command.Parameters.AddWithValue("$timestamp", TestTime.ToString("O", CultureInfo.InvariantCulture));
         await command.ExecuteNonQueryAsync();
     }
 

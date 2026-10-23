@@ -2,8 +2,10 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Threading;
 using StellarisDownloader.App;
+using StellarisDownloader.App.Controls;
 using StellarisDownloader.App.ViewModels;
 using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
@@ -16,7 +18,7 @@ public sealed class CompiledXamlTests
     [Fact]
     public void MainWindowCompiledXamlLoadsOnAnStaDispatcher()
     {
-        WpfTestRunner.Run(() =>
+        WpfTestRunner.Run(async () =>
         {
             var settings = new StubSettingsStore(new AppSettings());
             using var repository = new SqliteModRepository(
@@ -44,12 +46,57 @@ public sealed class CompiledXamlTests
                 () => throw UnexpectedFactoryCall(),
                 () => throw UnexpectedFactoryCall(),
                 () => throw UnexpectedFactoryCall(),
+                () => throw UnexpectedFactoryCall(),
                 () => throw UnexpectedFactoryCall());
 
-            Assert.NotNull(window.Content);
-            window.DataContext = null;
-            window.Content = null;
-            return Task.CompletedTask;
+            mainViewModel.SelectedMod = new ModListItemViewModel(new ModRecord
+            {
+                WorkshopId = "3387068412",
+                Title = "Vanilla Basic Optimization",
+                Description = "[h1][b]Formatted heading[/b][/h1]",
+                CreatorId = "76561198900479637",
+                CreatorName = "ForeverのSkywalker",
+                ContentPath = "C:\\Mods\\3387068412",
+                FileSize = 1_416_269,
+                ImportedOrDownloadedAtUtc = DateTimeOffset.UnixEpoch,
+                LastScannedAtUtc = DateTimeOffset.UnixEpoch,
+            });
+
+            try
+            {
+                ShowOffscreen(window);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+
+                Assert.NotNull(window.Content);
+                var workshopLink = Assert.IsType<Hyperlink>(
+                    window.FindName("WorkshopDetailLink"));
+                var folderLink = Assert.IsType<Hyperlink>(
+                    window.FindName("LocalPathDetailLink"));
+                Assert.Equal(
+                    "https://steamcommunity.com/sharedfiles/filedetails/?id=3387068412",
+                    Assert.Single(workshopLink.Inlines.OfType<Run>()).Text);
+                Assert.Equal(
+                    "C:\\Mods\\3387068412",
+                    Assert.Single(folderLink.Inlines.OfType<Run>()).Text);
+                Assert.Equal(
+                    "ForeverのSkywalker",
+                    Assert.IsType<TextBlock>(window.FindName("AuthorValueText")).Text);
+                Assert.Equal(
+                    "1.35 MB",
+                    Assert.IsType<TextBlock>(window.FindName("SizeValueText")).Text);
+                var description = Assert.IsType<WorkshopDescriptionViewer>(
+                    window.FindName("DescriptionViewer"));
+                var descriptionText = new TextRange(
+                    description.Document.ContentStart,
+                    description.Document.ContentEnd).Text;
+                Assert.Contains("Formatted heading", descriptionText, StringComparison.Ordinal);
+                Assert.DoesNotContain("[h1]", descriptionText, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                window.Close();
+            }
         });
     }
 
@@ -80,6 +127,7 @@ public sealed class CompiledXamlTests
                 mainViewModel,
                 downloadQueue,
                 updateViewModel,
+                () => throw UnexpectedFactoryCall(),
                 () => throw UnexpectedFactoryCall(),
                 () => throw UnexpectedFactoryCall(),
                 () => throw UnexpectedFactoryCall(),

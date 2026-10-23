@@ -17,7 +17,7 @@ public sealed class ProcessRunnerTests
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "[Console]::Out.WriteLine('stdout-line'); [Console]::Error.WriteLine('stderr-line'); exit 7",
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Out.WriteLine('stdout-line 正在验证安装'); [Console]::Error.WriteLine('stderr-line'); exit 7",
             ],
             Environment.CurrentDirectory,
             TimeSpan.FromSeconds(10));
@@ -25,7 +25,7 @@ public sealed class ProcessRunnerTests
         Assert.Equal(7, result.ExitCode);
         Assert.False(result.TimedOut);
         Assert.False(result.Cancelled);
-        Assert.Contains(result.Output, line => line.Source == "stdout" && line.Text == "stdout-line");
+        Assert.Contains(result.Output, line => line.Source == "stdout" && line.Text == "stdout-line 正在验证安装");
         Assert.Contains(result.Output, line => line.Source == "stderr" && line.Text == "stderr-line");
     }
 

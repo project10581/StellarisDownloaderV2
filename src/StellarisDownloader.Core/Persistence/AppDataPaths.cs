@@ -15,6 +15,7 @@ public sealed class AppDataPaths
         CacheDirectory = Path.Combine(RootDirectory, "cache");
         PreviewCacheDirectory = Path.Combine(CacheDirectory, "previews");
         LogsDirectory = Path.Combine(RootDirectory, "logs");
+        SnapshotsDirectory = Path.Combine(RootDirectory, "snapshots");
     }
 
     public string RootDirectory { get; }
@@ -30,6 +31,8 @@ public sealed class AppDataPaths
     public string PreviewCacheDirectory { get; }
 
     public string LogsDirectory { get; }
+
+    public string SnapshotsDirectory { get; }
 
     public static AppDataPaths CreateDefault()
     {
@@ -51,5 +54,6 @@ public sealed class AppDataPaths
         Directory.CreateDirectory(SteamCmdDirectory);
         Directory.CreateDirectory(PreviewCacheDirectory);
         Directory.CreateDirectory(LogsDirectory);
+        Directory.CreateDirectory(SnapshotsDirectory);
     }
 }

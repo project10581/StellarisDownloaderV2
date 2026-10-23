@@ -1,0 +1,152 @@
+<Window x:Class="StellarisDownloader.App.ModSnapshotsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource Snapshots.Title}"
+        Width="1200" Height="760" MinWidth="900" MinHeight="620"
+        WindowStartupLocation="CenterOwner" Loaded="Window_Loaded">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+        </Style>
+        <DataTemplate x:Key="ModSnapshotList">
+            <DataGrid ItemsSource="{Binding}" AutoGenerateColumns="False" IsReadOnly="True"
+                      CanUserAddRows="False" CanUserSortColumns="False" SelectionUnit="FullRow"
+                      EnableRowVirtualization="True" EnableColumnVirtualization="True">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="Background" Value="White" />
+                        <Setter Property="Foreground" Value="#252525" />
+                        <Setter Property="BorderThickness" Value="0,0,0,1" />
+                        <Setter Property="BorderBrush" Value="#E5E7EB" />
+                        <Setter Property="MinHeight" Value="32" />
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#E8EEF8" />
+                                <Setter Property="BorderBrush" Value="#385B91" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                <Setter Property="Background" Value="#FDE7E9" />
+                                <Setter Property="Foreground" Value="#9B1C2E" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsAdded}" Value="True">
+                                <Setter Property="Background" Value="#E6F4EA" />
+                                <Setter Property="Foreground" Value="#176B36" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.CellStyle>
+                    <Style TargetType="DataGridCell">
+                        <Setter Property="Background" Value="Transparent" />
+                        <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="VerticalContentAlignment" Value="Center" />
+                    </Style>
+                </DataGrid.CellStyle>
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Width="65">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Margin="6,4">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsMissing}" Value="True"><Setter Property="Text" Value="{DynamicResource Snapshots.Missing}" /></DataTrigger>
+                                                <DataTrigger Binding="{Binding IsAdded}" Value="True"><Setter Property="Text" Value="{DynamicResource Snapshots.Added}" /></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Binding="{Binding DisplayTitle}" Width="*">
+                        <DataGridTextColumn.Header><TextBlock Text="{DynamicResource Snapshots.ModName}" /></DataGridTextColumn.Header>
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock"><Setter Property="Margin" Value="4" /><Setter Property="TextTrimming" Value="CharacterEllipsis" /><Setter Property="ToolTip" Value="{Binding DisplayTitle}" /></Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTemplateColumn Header="Workshop ID" Width="135">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Margin="4">
+                                    <Hyperlink Click="OpenWorkshop_Click" Tag="{Binding WorkshopUrl}" ToolTip="{Binding WorkshopUrl}">
+                                        <Run Text="{Binding WorkshopId, Mode=OneWay}" />
+                                    </Hyperlink>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <WrapPanel>
+            <Button Content="{DynamicResource Snapshots.SaveVersion}" IsEnabled="{Binding IsIdle}" Click="SaveVersion_Click" FontWeight="SemiBold" />
+            <Button Content="{DynamicResource Snapshots.CompareSelected}" IsEnabled="{Binding CanCompareSelected}" Click="CompareSelected_Click" />
+            <Button Content="{DynamicResource Snapshots.Export}" IsEnabled="{Binding IsIdle}" Click="Export_Click" />
+            <Button Content="{DynamicResource Snapshots.CompareFiles}" IsEnabled="{Binding IsIdle}" Click="CompareFiles_Click" />
+            <Button Content="{DynamicResource Snapshots.RefreshHistory}" IsEnabled="{Binding IsIdle}" Click="RefreshHistory_Click" />
+            <Button Content="{DynamicResource Updates.Cancel}" IsEnabled="{Binding IsBusy}" Click="Cancel_Click" />
+        </WrapPanel>
+        <StackPanel Grid.Row="1" Margin="0,0,0,12">
+            <TextBlock Text="{DynamicResource Snapshots.HistoryNote}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding HistoryDirectory}" Foreground="#555555" TextTrimming="CharacterEllipsis" ToolTip="{Binding HistoryDirectory}" />
+            <TextBlock Text="{Binding HistoryWarning}" Foreground="Firebrick" TextWrapping="Wrap" />
+        </StackPanel>
+        <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <StackPanel>
+                <DockPanel Margin="0,0,0,6">
+                    <TextBlock Text="{DynamicResource Snapshots.LeftTitle}" FontWeight="SemiBold" FontSize="15" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock Text="{DynamicResource Snapshots.Missing}" Foreground="#9B1C2E" /><TextBlock Text="{Binding Missing.Count}" Foreground="#9B1C2E" Margin="5,0,12,0" />
+                        <TextBlock Text="{DynamicResource Snapshots.Total}" /><TextBlock Text="{Binding BaselineItems.Count}" Margin="5,0,0,0" />
+                    </StackPanel>
+                </DockPanel>
+                <ComboBox ItemsSource="{Binding HistoryVersions}" SelectedItem="{Binding SelectedBaselineVersion}" DisplayMemberPath="DisplayName"
+                          IsEnabled="{Binding IsIdle}" MinHeight="30" ToolTip="{Binding SelectedBaselineVersion.SourceLibrary}" />
+                <TextBlock Text="{Binding BaselineSummary}" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <DockPanel Margin="0,0,0,6">
+                    <TextBlock Text="{DynamicResource Snapshots.RightTitle}" FontWeight="SemiBold" FontSize="15" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock Text="{DynamicResource Snapshots.Added}" Foreground="#176B36" /><TextBlock Text="{Binding Added.Count}" Foreground="#176B36" Margin="5,0,12,0" />
+                        <TextBlock Text="{DynamicResource Snapshots.Total}" /><TextBlock Text="{Binding CurrentItems.Count}" Margin="5,0,0,0" />
+                    </StackPanel>
+                </DockPanel>
+                <ComboBox ItemsSource="{Binding CurrentSources}" SelectedItem="{Binding SelectedCurrentSource}" DisplayMemberPath="DisplayName"
+                          IsEnabled="{Binding IsIdle}" MinHeight="30" ToolTip="{Binding SelectedCurrentSource.SourceLibrary}" />
+                <TextBlock Text="{Binding CurrentSummary}" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+        </Grid>
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <ContentControl x:Name="BaselineList" Content="{Binding BaselineItems}" ContentTemplate="{StaticResource ModSnapshotList}" />
+            <ContentControl x:Name="CurrentList" Grid.Column="2" Content="{Binding CurrentItems}" ContentTemplate="{StaticResource ModSnapshotList}" />
+        </Grid>
+        <StackPanel Grid.Row="4" Margin="0,10,0,10">
+            <TextBlock Text="{Binding Warnings}" TextWrapping="Wrap" Foreground="#805000" />
+            <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding LastError}" TextWrapping="Wrap" Foreground="Firebrick" />
+        </StackPanel>
+        <WrapPanel Grid.Row="5">
+            <Button Content="{DynamicResource Snapshots.CopyMissing}" IsEnabled="{Binding CanCopyMissing}" Click="CopyMissing_Click" />
+            <Button Content="{DynamicResource Snapshots.ExportReport}" IsEnabled="{Binding CanExportReport}" Click="ExportReport_Click" />
+            <Button Content="{DynamicResource Snapshots.Close}" IsCancel="True" IsEnabled="{Binding IsIdle}" />
+        </WrapPanel>
+    </Grid>
+</Window>

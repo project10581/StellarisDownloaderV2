@@ -6,7 +6,6 @@ namespace StellarisDownloader.Core.Services;
 
 public sealed class LibraryService : ILibraryService
 {
-    private const string ScanStage = "ScanningLibrary";
     private const string JunctionStage = "EnsuringJunction";
 
     private readonly ISettingsStore settingsStore;
@@ -303,64 +302,34 @@ public sealed class LibraryService : ILibraryService
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
-        var directories = new DirectoryInfo(normalizedRoot)
-            .EnumerateDirectories()
-            .OrderBy(directory => directory.Name, StringComparer.Ordinal)
-            .ToArray();
-        var workshopDirectories = directories
-            .Where(directory => directory.Name.All(char.IsAsciiDigit))
-            .ToArray();
-        var ignoredDirectoryCount = directories.Length - workshopDirectories.Length;
-        var records = new List<ModRecord>(workshopDirectories.Length);
-        var emptyWorkshopIds = new List<string>();
+        var inventory = LocalModDirectoryScanner.Scan(normalizedRoot, progress, cancellationToken);
+        var records = new List<ModRecord>(inventory.Directories.Count);
         var scannedAtUtc = timeProvider.GetUtcNow();
         var previousRecordsById = previousRecords.ToDictionary(
             record => record.WorkshopId,
             StringComparer.Ordinal);
 
-        progress?.Report(new OperationProgress(
-            ScanStage,
-            Completed: 0,
-            Total: workshopDirectories.Length,
-            WorkshopId: null,
-            Message: "Scanning the selected mod library."));
-
-        for (var index = 0; index < workshopDirectories.Length; index++)
+        foreach (var directory in inventory.Directories)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var directory = workshopDirectories[index];
             var workshopId = directory.Name;
-            if (!directory.EnumerateFileSystemInfos().Any())
+            previousRecordsById.TryGetValue(workshopId, out var previousRecord);
+            records.Add(new ModRecord
             {
-                emptyWorkshopIds.Add(workshopId);
-            }
-            else
-            {
-                previousRecordsById.TryGetValue(workshopId, out var previousRecord);
-                records.Add(new ModRecord
-                {
-                    WorkshopId = workshopId,
-                    ContentPath = directory.FullName,
-                    ImportedOrDownloadedAtUtc = preserveExistingState && previousRecord is not null
-                        ? previousRecord.ImportedOrDownloadedAtUtc
-                        : new DateTimeOffset(directory.LastWriteTimeUtc),
-                    InstalledWorkshopUpdatedAtUtc = preserveExistingState
-                        ? previousRecord?.InstalledWorkshopUpdatedAtUtc
-                        : null,
-                    LastOperationStatus = preserveExistingState && previousRecord is not null
-                        ? previousRecord.LastOperationStatus
-                        : OperationStatus.Succeeded,
-                    LastError = preserveExistingState ? previousRecord?.LastError : null,
-                    LastScannedAtUtc = scannedAtUtc,
-                });
-            }
-
-            progress?.Report(new OperationProgress(
-                ScanStage,
-                Completed: index + 1,
-                Total: workshopDirectories.Length,
-                WorkshopId: workshopId,
-                Message: $"Scanned Workshop item {workshopId}."));
+                WorkshopId = workshopId,
+                ContentPath = directory.FullName,
+                ImportedOrDownloadedAtUtc = preserveExistingState && previousRecord is not null
+                    ? previousRecord.ImportedOrDownloadedAtUtc
+                    : new DateTimeOffset(directory.LastWriteTimeUtc),
+                InstalledWorkshopUpdatedAtUtc = preserveExistingState
+                    ? previousRecord?.InstalledWorkshopUpdatedAtUtc
+                    : null,
+                LastOperationStatus = preserveExistingState && previousRecord is not null
+                    ? previousRecord.LastOperationStatus
+                    : OperationStatus.Succeeded,
+                LastError = preserveExistingState ? previousRecord?.LastError : null,
+                LastScannedAtUtc = scannedAtUtc,
+            });
         }
 
         var metadataById = await GetMetadataWithoutBlockingScanAsync(
@@ -401,8 +370,8 @@ public sealed class LibraryService : ILibraryService
             RemovedWorkshopIds = previousIds.Except(currentIds, StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
-            EmptyWorkshopIds = emptyWorkshopIds,
-            IgnoredDirectoryCount = ignoredDirectoryCount,
+            EmptyWorkshopIds = inventory.EmptyWorkshopIds,
+            IgnoredDirectoryCount = inventory.IgnoredDirectoryCount + inventory.LinkedWorkshopIds.Count,
         };
     }
 
@@ -441,6 +410,11 @@ public sealed class LibraryService : ILibraryService
             Description = metadata?.Description ?? previousRecord?.Description,
             PreviewUrl = metadata?.PreviewUrl ?? previousRecord?.PreviewUrl,
             CreatorId = metadata?.CreatorId ?? previousRecord?.CreatorId,
+            CreatorName = ModRecord.ResolveCreatorName(
+                metadata?.CreatorId,
+                metadata?.CreatorName,
+                previousRecord?.CreatorId,
+                previousRecord?.CreatorName),
             CreatedAtUtc = metadata?.CreatedAtUtc ?? previousRecord?.CreatedAtUtc,
             FileSize = metadata?.FileSize ?? previousRecord?.FileSize,
         };
