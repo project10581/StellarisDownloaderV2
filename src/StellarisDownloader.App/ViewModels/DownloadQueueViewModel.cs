@@ -106,6 +106,7 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
             if (SetProperty(ref isBusy, value))
             {
                 OnPropertyChanged(nameof(CanStart));
+                OnPropertyChanged(nameof(IsIdle));
                 OnPropertyChanged(nameof(CanCancel));
                 NotifyCommandStates();
             }
@@ -113,6 +114,8 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
     }
 
     public bool CanStart => !IsBusy && items.Any(IsStartable);
+
+    public bool IsIdle => !IsBusy;
 
     public bool CanCancel => IsBusy
         && activeCancellation is not null
@@ -314,7 +317,7 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
                 else if (wasCancelled || cancellation.IsCancellationRequested)
                 {
                     const string error = "Download queue was cancelled.";
-                    foreach (var item in batch)
+                    foreach (var item in batch.Where(item => !item.IsTerminal))
                     {
                         item.Cancel(error);
                     }
@@ -325,7 +328,7 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
                 else
                 {
                     var error = batchFailure ?? "The download queue failed.";
-                    foreach (var item in batch)
+                    foreach (var item in batch.Where(item => !item.IsTerminal))
                     {
                         item.Fail(error);
                     }
@@ -532,20 +535,21 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
         IReadOnlyCollection<DownloadQueueItemViewModel> batch)
     {
         CurrentStage = progress.Stage;
-        if (progress.WorkshopId is not null)
+        if (progress.ItemResult is { } result)
         {
-            CurrentWorkshopId = progress.WorkshopId;
-            foreach (var item in batch)
-            {
-                if (item.Status == DownloadQueueItemStatus.Downloading
-                    && item.WorkshopId != progress.WorkshopId)
-                {
-                    item.MarkReady();
-                }
-            }
-
+            batch.FirstOrDefault(item => item.WorkshopId == result.WorkshopId)?.Complete(result);
+            CurrentWorkshopId = null;
+            ProgressCompleted = batch.Count(item => item.IsTerminal);
+            RecalculateCounts();
+        }
+        else if (progress.WorkshopId is not null)
+        {
             var current = batch.FirstOrDefault(item => item.WorkshopId == progress.WorkshopId);
-            current?.MarkDownloading();
+            if (current is { IsTerminal: false })
+            {
+                CurrentWorkshopId = progress.WorkshopId;
+                current.MarkDownloading();
+            }
         }
 
         if (string.Equals(progress.Stage, "DownloadingQueue", StringComparison.Ordinal))

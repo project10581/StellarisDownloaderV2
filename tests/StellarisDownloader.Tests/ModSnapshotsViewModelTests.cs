@@ -15,6 +15,50 @@ namespace StellarisDownloader.Tests;
 public sealed class ModSnapshotsViewModelTests
 {
     [Fact]
+    public void SelectingAnOldListInTheWindowAutomaticallyComparesAgainstTheScannedLibrary()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var temporary = new TemporaryDirectory();
+            var history = new ModSnapshotHistory(temporary.GetPath("snapshots"));
+            var older = await history.SaveAsync(ModSnapshotTests.Snapshot("100"));
+            await history.SaveAsync(ModSnapshotTests.Snapshot("200") with
+            {
+                CapturedAtUtc = DateTimeOffset.UtcNow,
+            });
+            var service = new SnapshotServiceStub(ModSnapshotTests.Snapshot("300"));
+            var viewModel = new ModSnapshotsViewModel(service, history, key => key);
+            await viewModel.InitializeAsync();
+            Assert.Equal("200", Assert.Single(viewModel.Missing).WorkshopId);
+            var window = new ModSnapshotsWindow(viewModel)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000,
+                ShowInTaskbar = false,
+            };
+            try
+            {
+                window.Show();
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                viewModel.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(viewModel.IsBusy) && !viewModel.IsBusy) { completed.TrySetResult(); }
+                };
+                var selector = Assert.IsType<ComboBox>(window.FindName("BaselineSelector"));
+                selector.SelectedItem = viewModel.HistoryVersions.Single(item => item.FilePath == older);
+                await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Null(viewModel.LastError);
+                Assert.Equal("100", Assert.Single(viewModel.Missing).WorkshopId);
+                Assert.Equal("300", Assert.Single(viewModel.Added).WorkshopId);
+                Assert.Equal(1, service.CaptureCount);
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
     public async Task CurrentComparisonAndReportPreserveDirectionAndMissingNames()
     {
         using var temporary = new TemporaryDirectory();
@@ -163,6 +207,7 @@ public sealed class ModSnapshotsViewModelTests
                 window.UpdateLayout();
                 Assert.Equal(resources["Snapshots.Title"], window.Title);
                 Assert.Empty(Descendants(window).OfType<TabControl>());
+                Assert.Single(Descendants(window).OfType<ComboBox>());
                 var oldHost = Assert.IsType<ContentControl>(window.FindName("BaselineList"));
                 var newHost = Assert.IsType<ContentControl>(window.FindName("CurrentList"));
                 var oldGrid = Assert.Single(Descendants(oldHost).OfType<DataGrid>());
@@ -215,14 +260,15 @@ public sealed class ModSnapshotsViewModelTests
     }
 
     [Fact]
-    public async Task SavedVersionsSurviveReopeningAndCanBeComparedWithoutCapturingTheLibrary()
+    public async Task SavedVersionsSurviveReopeningAndOpeningAutomaticallyComparesTheCurrentLibrary()
     {
         using var temporary = new TemporaryDirectory();
         var history = new ModSnapshotHistory(temporary.GetPath("snapshots"));
         var service = new SnapshotServiceStub(ModSnapshotTests.Snapshot("100"));
         var viewModel = new ModSnapshotsViewModel(service, history, key => key);
         await viewModel.InitializeAsync();
-        Assert.False(viewModel.CanCompareSelected);
+        Assert.Null(viewModel.SelectedBaselineVersion);
+        Assert.Single(viewModel.CurrentItems);
         await viewModel.SaveVersionAsync();
         var first = Assert.Single(viewModel.HistoryVersions).FilePath!;
         var original = await File.ReadAllBytesAsync(first);
@@ -233,19 +279,21 @@ public sealed class ModSnapshotsViewModelTests
         Assert.Equal(original, await File.ReadAllBytesAsync(first));
         var reopened = new ModSnapshotsViewModel(service, history, key => key);
         await reopened.InitializeAsync();
-        reopened.SelectedBaselineVersion = reopened.HistoryVersions[0];
-        reopened.SelectedCurrentSource = reopened.HistoryVersions[1];
-        await reopened.CompareSelectedAsync();
+        Assert.NotNull(reopened.Comparison);
+        await reopened.SelectBaselineAsync(reopened.HistoryVersions[1]);
 
-        Assert.Equal(2, service.CaptureCount);
+        Assert.Equal(4, service.CaptureCount);
         Assert.Single(reopened.BaselineItems);
         Assert.Single(reopened.CurrentItems);
         Assert.Empty(reopened.Missing);
         Assert.Empty(reopened.Added);
         Assert.Equal(Path.Combine(history.DirectoryPath, "exports"), reopened.DefaultExportDirectory);
-        reopened.SelectedCurrentSource = reopened.CurrentSources[0];
-        Assert.Null(reopened.Comparison);
-        Assert.Empty(reopened.CurrentItems);
+        await reopened.CompareFilesAsync(first, reopened.HistoryVersions[0].FilePath!);
+        Assert.True(reopened.IsFileComparison);
+        Assert.Equal(4, service.CaptureCount);
+        await reopened.LoadHistoryAsync();
+        Assert.False(reopened.IsFileComparison);
+        Assert.Equal(5, service.CaptureCount);
     }
 
     [Fact]

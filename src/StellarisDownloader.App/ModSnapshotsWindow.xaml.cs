@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Documents;
 using Microsoft.Win32;
 using StellarisDownloader.App.ViewModels;
@@ -50,8 +51,13 @@ public partial class ModSnapshotsWindow : Window
     private async void SaveVersion_Click(object sender, RoutedEventArgs e) =>
         await viewModel.SaveVersionAsync().ConfigureAwait(true);
 
-    private async void CompareSelected_Click(object sender, RoutedEventArgs e) =>
-        await viewModel.CompareSelectedAsync().ConfigureAwait(true);
+    private async void Baseline_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (viewModel is not null && !viewModel.IsBusy && IsLoaded)
+        {
+            await viewModel.SelectBaselineAsync(BaselineSelector.SelectedItem as SnapshotSourceViewModel).ConfigureAwait(true);
+        }
+    }
 
     private async void RefreshHistory_Click(object sender, RoutedEventArgs e) =>
         await viewModel.LoadHistoryAsync().ConfigureAwait(true);

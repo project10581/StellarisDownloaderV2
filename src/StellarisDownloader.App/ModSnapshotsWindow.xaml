@@ -95,10 +95,13 @@
         </Grid.RowDefinitions>
         <WrapPanel>
             <Button Content="{DynamicResource Snapshots.SaveVersion}" IsEnabled="{Binding IsIdle}" Click="SaveVersion_Click" FontWeight="SemiBold" />
-            <Button Content="{DynamicResource Snapshots.CompareSelected}" IsEnabled="{Binding CanCompareSelected}" Click="CompareSelected_Click" />
-            <Button Content="{DynamicResource Snapshots.Export}" IsEnabled="{Binding IsIdle}" Click="Export_Click" />
-            <Button Content="{DynamicResource Snapshots.CompareFiles}" IsEnabled="{Binding IsIdle}" Click="CompareFiles_Click" />
             <Button Content="{DynamicResource Snapshots.RefreshHistory}" IsEnabled="{Binding IsIdle}" Click="RefreshHistory_Click" />
+            <Menu Background="Transparent" IsEnabled="{Binding IsIdle}" Margin="0,0,8,8" VerticalAlignment="Center">
+                <MenuItem Header="{DynamicResource Snapshots.More}" Padding="12,6">
+                    <MenuItem Header="{DynamicResource Snapshots.Export}" Click="Export_Click" />
+                    <MenuItem Header="{DynamicResource Snapshots.CompareFiles}" Click="CompareFiles_Click" />
+                </MenuItem>
+            </Menu>
             <Button Content="{DynamicResource Updates.Cancel}" IsEnabled="{Binding IsBusy}" Click="Cancel_Click" />
         </WrapPanel>
         <StackPanel Grid.Row="1" Margin="0,0,0,12">
@@ -116,7 +119,8 @@
                         <TextBlock Text="{DynamicResource Snapshots.Total}" /><TextBlock Text="{Binding BaselineItems.Count}" Margin="5,0,0,0" />
                     </StackPanel>
                 </DockPanel>
-                <ComboBox ItemsSource="{Binding HistoryVersions}" SelectedItem="{Binding SelectedBaselineVersion}" DisplayMemberPath="DisplayName"
+                <ComboBox x:Name="BaselineSelector" ItemsSource="{Binding HistoryVersions}" SelectedItem="{Binding SelectedBaselineVersion}" DisplayMemberPath="DisplayName"
+                          SelectionChanged="Baseline_SelectionChanged"
                           IsEnabled="{Binding IsIdle}" MinHeight="30" ToolTip="{Binding SelectedBaselineVersion.SourceLibrary}" />
                 <TextBlock Text="{Binding BaselineSummary}" TextWrapping="Wrap" Margin="0,6,0,0" />
             </StackPanel>
@@ -128,8 +132,9 @@
                         <TextBlock Text="{DynamicResource Snapshots.Total}" /><TextBlock Text="{Binding CurrentItems.Count}" Margin="5,0,0,0" />
                     </StackPanel>
                 </DockPanel>
-                <ComboBox ItemsSource="{Binding CurrentSources}" SelectedItem="{Binding SelectedCurrentSource}" DisplayMemberPath="DisplayName"
-                          IsEnabled="{Binding IsIdle}" MinHeight="30" ToolTip="{Binding SelectedCurrentSource.SourceLibrary}" />
+                <Border MinHeight="30" Background="#F0F4F8" Padding="8,5">
+                    <TextBlock Text="{Binding CurrentSourceLabel}" />
+                </Border>
                 <TextBlock Text="{Binding CurrentSummary}" TextWrapping="Wrap" Margin="0,6,0,0" />
             </StackPanel>
         </Grid>

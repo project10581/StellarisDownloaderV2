@@ -21,8 +21,17 @@ public sealed class WebBridgeMessageValidationResult
 
     public IReadOnlyList<string> WorkshopIds { get; }
 
-    internal static WebBridgeMessageValidationResult Accepted(List<string> workshopIds) =>
-        new(WebBridgeMessageError.None, new ReadOnlyCollection<string>(workshopIds));
+    public string MessageType { get; internal init; } = "enqueueWorkshopIds";
+
+    public string? Title { get; internal init; }
+
+    internal static WebBridgeMessageValidationResult Accepted(
+        List<string> workshopIds, string messageType = "enqueueWorkshopIds", string? title = null) =>
+        new(WebBridgeMessageError.None, new ReadOnlyCollection<string>(workshopIds))
+        {
+            MessageType = messageType,
+            Title = title,
+        };
 
     internal static WebBridgeMessageValidationResult Rejected(WebBridgeMessageError error) =>
         new(error, NoWorkshopIds);

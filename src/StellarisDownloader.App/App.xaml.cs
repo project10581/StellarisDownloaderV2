@@ -14,6 +14,7 @@ namespace StellarisDownloader.App;
 public partial class App : Application, IDisposable
 {
     private JsonSettingsStore? settingsStore;
+    private WorkshopFavoritesStore? favoritesStore;
     private SqliteModRepository? modRepository;
     private WriteOperationCoordinator? writeCoordinator;
     private HttpClient? httpClient;
@@ -36,6 +37,8 @@ public partial class App : Application, IDisposable
             paths.EnsureDirectories();
 
             settingsStore = new JsonSettingsStore(paths.SettingsFile);
+            favoritesStore = new WorkshopFavoritesStore(paths.WorkshopFavoritesFile);
+            var favoritesViewModel = new WorkshopFavoritesViewModel(favoritesStore);
             modRepository = new SqliteModRepository(paths.DatabaseFile);
             await modRepository.InitializeAsync().ConfigureAwait(true);
 
@@ -161,7 +164,8 @@ public partial class App : Application, IDisposable
                 () => new DownloadQueueWindow(downloadQueueViewModel),
                 () => new WorkshopBrowserWindow(
                     downloadQueueViewModel,
-                    installedStateProvider),
+                    installedStateProvider,
+                    favoritesViewModel),
                 CreateUpdateWindow,
                 CreateApplicationUpdateWindow,
                 CreateSnapshotsWindow);
@@ -254,6 +258,7 @@ public partial class App : Application, IDisposable
         writeCoordinator?.Dispose();
         modRepository?.Dispose();
         settingsStore?.Dispose();
+        favoritesStore?.Dispose();
         applicationUpdateViewModel = null;
         appUpdateService = null;
         downloadQueueViewModel = null;

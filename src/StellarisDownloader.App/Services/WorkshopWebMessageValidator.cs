@@ -16,7 +16,7 @@ public static class WorkshopWebMessageValidator
                 WebBridgeMessageError.UntrustedSource);
         }
 
-        if (string.IsNullOrWhiteSpace(json))
+        if (string.IsNullOrWhiteSpace(json) || json.Length > 65536)
         {
             return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.InvalidJson);
         }
@@ -42,6 +42,9 @@ public static class WorkshopWebMessageValidator
 
         var hasType = false;
         var hasIds = false;
+        var hasTitle = false;
+        string? messageType = null;
+        string? title = null;
         JsonElement ids = default;
 
         foreach (var property in root.EnumerateObject())
@@ -57,15 +60,13 @@ public static class WorkshopWebMessageValidator
 
                     hasType = true;
                     if (property.Value.ValueKind != JsonValueKind.String
-                        || !string.Equals(
-                            property.Value.GetString(),
-                            ExpectedMessageType,
-                            StringComparison.Ordinal))
+                        || property.Value.GetString() is not (ExpectedMessageType or "addWorkshopFavorite" or "removeWorkshopFavorite"))
                     {
                         return WebBridgeMessageValidationResult.Rejected(
                             WebBridgeMessageError.InvalidMessageType);
                     }
 
+                    messageType = property.Value.GetString();
                     break;
 
                 case "ids":
@@ -79,6 +80,19 @@ public static class WorkshopWebMessageValidator
                     ids = property.Value;
                     break;
 
+                case "title":
+                    if (hasTitle)
+                    {
+                        return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.DuplicateProperty);
+                    }
+                    hasTitle = true;
+                    if (property.Value.ValueKind != JsonValueKind.String || property.Value.GetString()!.Length > 1024)
+                    {
+                        return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.InvalidJson);
+                    }
+                    title = property.Value.GetString();
+                    break;
+
                 default:
                     return WebBridgeMessageValidationResult.Rejected(
                         WebBridgeMessageError.UnknownProperty);
@@ -90,10 +104,14 @@ public static class WorkshopWebMessageValidator
             return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.MissingProperty);
         }
 
-        return ValidateIds(ids);
+        if (hasTitle && messageType != "addWorkshopFavorite")
+        {
+            return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.UnknownProperty);
+        }
+        return ValidateIds(ids, messageType!, title);
     }
 
-    private static WebBridgeMessageValidationResult ValidateIds(JsonElement ids)
+    private static WebBridgeMessageValidationResult ValidateIds(JsonElement ids, string messageType, string? title)
     {
         if (ids.ValueKind != JsonValueKind.Array)
         {
@@ -102,6 +120,11 @@ public static class WorkshopWebMessageValidator
 
         var originalCount = ids.GetArrayLength();
         if (originalCount is < 1 or > MaximumIdCount)
+        {
+            return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.InvalidIdCount);
+        }
+
+        if (messageType != ExpectedMessageType && originalCount != 1)
         {
             return WebBridgeMessageValidationResult.Rejected(WebBridgeMessageError.InvalidIdCount);
         }
@@ -117,7 +140,7 @@ public static class WorkshopWebMessageValidator
             }
 
             var workshopId = item.GetString();
-            if (string.IsNullOrEmpty(workshopId) || !workshopId.All(IsAsciiDigit))
+            if (string.IsNullOrEmpty(workshopId) || workshopId.Length > 20 || !workshopId.All(IsAsciiDigit))
             {
                 return WebBridgeMessageValidationResult.Rejected(
                     WebBridgeMessageError.InvalidWorkshopId);
@@ -129,7 +152,7 @@ public static class WorkshopWebMessageValidator
             }
         }
 
-        return WebBridgeMessageValidationResult.Accepted(workshopIds);
+        return WebBridgeMessageValidationResult.Accepted(workshopIds, messageType, title);
     }
 
     private static bool IsAsciiDigit(char character) => character is >= '0' and <= '9';

@@ -9,6 +9,7 @@
     const numericIdPattern = /^[0-9]+$/;
     const queuedIds = new Set();
     const installedIds = new Set();
+    const favoriteIds = new Set();
     const recordsByTarget = new Map();
     const buttonSize = 30;
     const buttonInset = 6;
@@ -19,6 +20,7 @@
     let positionFrame = null;
     let positionInterval = null;
     let disposed = false;
+    let pointer = null;
 
     function isTrustedHost(hostname) {
         const normalized = String(hostname || "").toLowerCase().replace(/\.$/, "");
@@ -244,6 +246,26 @@
         button.setAttribute("aria-label", state.title);
     }
 
+    function applyFavoriteState(button, workshopId) {
+        const saved = favoriteIds.has(workshopId);
+        button.dataset.workshopId = workshopId;
+        button.dataset.state = saved ? "favorited" : "unsaved";
+        button.textContent = saved ? "\u2605" : "\u2606";
+        button.title = saved ? "Remove from saved mods" : "Save for later (no download)";
+        button.style.background = "#f2c94c";
+        button.style.color = "#332600";
+        button.setAttribute("aria-label", button.title);
+        button.setAttribute("aria-pressed", String(saved));
+    }
+
+    function previewTitle(target) {
+        const link = target.closest("a");
+        const container = link && (link.closest(".workshopItem") || link.parentElement);
+        const title = container && container.querySelector(".workshopItemTitle, [class*='ItemTitle'], [class*='itemTitle']");
+        return String((title && title.textContent) || (link && link.getAttribute("title"))
+            || target.getAttribute("alt") || "").trim().slice(0, 1024);
+    }
+
     function createButton(target, workshopId) {
         const root = ensureOverlayRoot();
         if (!root) {
@@ -269,7 +291,26 @@
         }, true);
         applyButtonState(button, workshopId);
         root.appendChild(button);
-        recordsByTarget.set(target, { target: target, button: button });
+        const star = document.createElement("button");
+        star.type = "button";
+        star.className = buttonClass + " stellaris-downloader-favorite-button";
+        star.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            const currentId = star.dataset.workshopId || "";
+            if (!numericIdPattern.test(currentId) || !window.chrome || !window.chrome.webview) {
+                return;
+            }
+            const saved = favoriteIds.has(currentId);
+            if (saved) { favoriteIds.delete(currentId); } else { favoriteIds.add(currentId); }
+            refreshButtonStates();
+            const message = { type: saved ? "removeWorkshopFavorite" : "addWorkshopFavorite", ids: [currentId] };
+            if (!saved) { message.title = previewTitle(target); }
+            window.chrome.webview.postMessage(message);
+        }, true);
+        applyFavoriteState(star, workshopId);
+        root.appendChild(star);
+        recordsByTarget.set(target, { target: target, button: button, star: star });
     }
 
     function refreshButtonStates() {
@@ -277,8 +318,10 @@
             const workshopId = record.button.dataset.workshopId;
             if (workshopId && numericIdPattern.test(workshopId)) {
                 applyButtonState(record.button, workshopId);
+                applyFavoriteState(record.star, workshopId);
             }
         });
+        schedulePosition();
     }
 
     function intersectRect(rectangle, bounds) {
@@ -323,13 +366,41 @@
                 || visible.right - visible.left < buttonSize + buttonInset
                 || visible.bottom - visible.top < buttonSize + buttonInset) {
                 record.button.style.display = "none";
+                record.star.style.display = "none";
                 return;
             }
 
-            record.button.style.display = "inline-flex";
-            record.button.style.left = `${Math.round(visible.right - buttonSize - buttonInset)}px`;
-            record.button.style.top = `${Math.round(visible.top + buttonInset)}px`;
+            const link = record.target.closest("a");
+            const focused = record.button.matches(":focus-visible") || record.star.matches(":focus-visible")
+                || (link && link.matches(":focus-visible"));
+            const hovered = pointer && pointer.x >= visible.left && pointer.x <= visible.right
+                && pointer.y >= visible.top && pointer.y <= visible.bottom;
+            const showDownload = hovered || focused || record.button.dataset.state !== "available";
+            const showStar = hovered || focused || record.star.dataset.state === "favorited";
+            const size = Math.min(buttonSize, (visible.right - visible.left - buttonInset * 2 - 4) / 2);
+            [record.button, record.star].forEach(function (button, index) {
+                const show = index === 0 ? showDownload : showStar;
+                button.style.display = "inline-flex";
+                button.style.opacity = show ? "1" : "0";
+                button.style.pointerEvents = show ? "auto" : "none";
+                button.style.width = button.style.minWidth = `${size}px`;
+                button.style.height = button.style.minHeight = `${size}px`;
+                button.style.left = `${Math.round(visible.right - size - buttonInset - index * (size + 4))}px`;
+                button.style.top = `${Math.round(visible.top + buttonInset)}px`;
+            });
         });
+    }
+
+    function pointerMoved(event) {
+        pointer = { x: event.clientX, y: event.clientY };
+        schedulePosition();
+    }
+
+    function pointerLeft(event) {
+        if (event.type === "blur" || !event.relatedTarget) {
+            pointer = null;
+            schedulePosition();
+        }
     }
 
     function schedulePosition() {
@@ -353,6 +424,7 @@
         recordsByTarget.forEach(function (record, target) {
             if (!targets.has(target)) {
                 record.button.remove();
+                record.star.remove();
                 recordsByTarget.delete(target);
             }
         });
@@ -360,6 +432,7 @@
             const existing = recordsByTarget.get(target);
             if (existing) {
                 applyButtonState(existing.button, workshopId);
+                applyFavoriteState(existing.star, workshopId);
             } else {
                 createButton(target, workshopId);
             }
@@ -398,6 +471,11 @@
         }
         window.removeEventListener("scroll", schedulePosition, true);
         window.removeEventListener("resize", schedulePosition);
+        window.removeEventListener("pointermove", pointerMoved);
+        window.removeEventListener("pointerout", pointerLeft);
+        window.removeEventListener("blur", pointerLeft);
+        document.removeEventListener("focusin", schedulePosition);
+        document.removeEventListener("focusout", schedulePosition);
         document.removeEventListener("load", scheduleReconcile, true);
         document.removeEventListener("DOMContentLoaded", start);
         recordsByTarget.clear();
@@ -423,6 +501,11 @@
         });
         window.addEventListener("scroll", schedulePosition, true);
         window.addEventListener("resize", schedulePosition);
+        window.addEventListener("pointermove", pointerMoved, { passive: true });
+        window.addEventListener("pointerout", pointerLeft);
+        window.addEventListener("blur", pointerLeft);
+        document.addEventListener("focusin", schedulePosition);
+        document.addEventListener("focusout", schedulePosition);
         document.addEventListener("load", scheduleReconcile, true);
         positionInterval = window.setInterval(schedulePosition, 500);
         reconcileTargets();
@@ -441,6 +524,7 @@
     removeLegacyButtons();
     replaceIds(queuedIds, previousState && previousState.queuedIds);
     replaceIds(installedIds, previousState && previousState.installedIds);
+    replaceIds(favoriteIds, previousState && previousState.favoriteIds);
 
     window[integrationKey] = {
         get observer() {
@@ -450,13 +534,15 @@
             const value = state && typeof state === "object" ? state : {};
             replaceIds(queuedIds, value.queuedIds);
             replaceIds(installedIds, value.installedIds);
+            replaceIds(favoriteIds, value.favoriteIds);
             refreshButtonStates();
             scheduleReconcile();
         },
         snapshot: function () {
             return {
                 queuedIds: Array.from(queuedIds),
-                installedIds: Array.from(installedIds)
+                installedIds: Array.from(installedIds),
+                favoriteIds: Array.from(favoriteIds)
             };
         },
         dispose: dispose

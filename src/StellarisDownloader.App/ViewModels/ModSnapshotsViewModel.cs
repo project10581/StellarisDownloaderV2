@@ -23,9 +23,14 @@ public sealed class ModSnapshotsViewModel(
     private string warnings = string.Empty;
     private ModSnapshotComparison? comparison;
     private SnapshotSourceViewModel? selectedBaselineVersion;
-    private SnapshotSourceViewModel? selectedCurrentSource;
     private string historyWarning = string.Empty;
     private bool hasLoadedHistory;
+    private ModSnapshot? liveSnapshot;
+    private bool isFileComparison;
+
+    public bool IsFileComparison { get => isFileComparison; private set => SetProperty(ref isFileComparison, value); }
+
+    public string CurrentSourceLabel => IsFileComparison ? text("Snapshots.FileComparison") : text("Snapshots.LiveLibrary");
 
     public bool IsBusy
     {
@@ -37,7 +42,6 @@ public sealed class ModSnapshotsViewModel(
                 OnPropertyChanged(nameof(IsIdle));
                 OnPropertyChanged(nameof(CanExportReport));
                 OnPropertyChanged(nameof(CanCopyMissing));
-                OnPropertyChanged(nameof(CanCompareSelected));
             }
         }
     }
@@ -48,8 +52,6 @@ public sealed class ModSnapshotsViewModel(
 
     public bool CanCopyMissing => CanExportReport && Missing.Count > 0;
 
-    public bool CanCompareSelected => IsIdle && SelectedBaselineVersion is not null && SelectedCurrentSource is not null;
-
     public string HistoryDirectory => history.DirectoryPath;
 
     public string DefaultExportDirectory => history.ExportsDirectory;
@@ -57,8 +59,6 @@ public sealed class ModSnapshotsViewModel(
     public string HistoryWarning { get => historyWarning; private set => SetProperty(ref historyWarning, value); }
 
     public IReadOnlyList<SnapshotSourceViewModel> HistoryVersions { get; private set; } = [];
-
-    public IReadOnlyList<SnapshotSourceViewModel> CurrentSources { get; private set; } = [];
 
     public SnapshotSourceViewModel? SelectedBaselineVersion
     {
@@ -72,26 +72,6 @@ public sealed class ModSnapshotsViewModel(
                 {
                     ClearResults();
                 }
-
-                OnPropertyChanged(nameof(CanCompareSelected));
-            }
-        }
-    }
-
-    public SnapshotSourceViewModel? SelectedCurrentSource
-    {
-        get => selectedCurrentSource;
-        set
-        {
-            var previousPath = selectedCurrentSource?.FilePath;
-            if (SetProperty(ref selectedCurrentSource, value))
-            {
-                if (previousPath != value?.FilePath)
-                {
-                    ClearResults();
-                }
-
-                OnPropertyChanged(nameof(CanCompareSelected));
             }
         }
     }
@@ -140,8 +120,12 @@ public sealed class ModSnapshotsViewModel(
 
     public Task LoadHistoryAsync() => RunAsync(async token =>
     {
+        ClearResults();
+        liveSnapshot = null;
         await RefreshHistoryAsync(token);
-        StatusMessage = Format("Snapshots.HistoryCount", HistoryVersions.Count);
+        liveSnapshot = await snapshotService.CaptureAsync(token);
+        await ShowLiveComparisonAsync(token);
+        hasLoadedHistory = true;
     });
 
     public Task InitializeAsync() => hasLoadedHistory ? Task.CompletedTask : LoadHistoryAsync();
@@ -152,32 +136,43 @@ public sealed class ModSnapshotsViewModel(
         var path = await history.SaveAsync(snapshot, token);
         // The version is committed. Finish refreshing even if cancellation arrives afterwards.
         await RefreshHistoryAsync(CancellationToken.None);
-        SelectedCurrentSource = CurrentSources[0];
-        ClearResults();
-        CurrentItems = BuildSide(snapshot.Mods, null, ModSnapshotChange.Unchanged);
-        OnPropertyChanged(nameof(CurrentItems));
-        CurrentSummary = Describe(snapshot);
-        Warnings = DescribeWarnings(snapshot);
+        liveSnapshot = snapshot;
+        await ShowLiveComparisonAsync(CancellationToken.None);
         StatusMessage = Format("Snapshots.VersionSaved", path);
     });
 
-    public Task CompareSelectedAsync()
+    public Task SelectBaselineAsync(SnapshotSourceViewModel? baseline) => RunAsync(async token =>
     {
-        if (!CanCompareSelected || SelectedBaselineVersion?.FilePath is not { } baselinePath)
+        SelectedBaselineVersion = baseline;
+        liveSnapshot ??= await snapshotService.CaptureAsync(token);
+        await ShowLiveComparisonAsync(token);
+    });
+
+    private async Task ShowLiveComparisonAsync(CancellationToken token)
+    {
+        IsFileComparison = false;
+        OnPropertyChanged(nameof(CurrentSourceLabel));
+        ClearResults();
+        if (liveSnapshot is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        return SelectedCurrentSource?.FilePath is { } currentPath
-            ? CompareFilesAsync(baselinePath, currentPath)
-            : CompareCurrentAsync(baselinePath);
+        CurrentItems = BuildSide(liveSnapshot.Mods, null, ModSnapshotChange.Unchanged);
+        OnPropertyChanged(nameof(CurrentItems));
+        CurrentSummary = Describe(liveSnapshot);
+        Warnings = DescribeWarnings(liveSnapshot);
+        StatusMessage = text("Snapshots.FirstSaveHint");
+        if (SelectedBaselineVersion?.FilePath is { } path)
+        {
+            var baseline = await ModSnapshotFile.ReadAsync(path, token);
+            ShowComparison(baseline, liveSnapshot);
+        }
     }
 
     public Task ExportCurrentAsync(string path, bool asText) => RunAsync(async token =>
     {
         RejectManagedVersionOverwrite(path);
-        SelectedCurrentSource = CurrentSources.FirstOrDefault(item => item.FilePath is null);
-        ClearResults();
         var snapshot = await snapshotService.CaptureAsync(token);
         if (asText)
         {
@@ -188,28 +183,29 @@ public sealed class ModSnapshotsViewModel(
             await ModSnapshotFile.WriteAsync(path, snapshot, token);
         }
 
-        CurrentSummary = Describe(snapshot);
-        CurrentItems = BuildSide(snapshot.Mods, null, ModSnapshotChange.Unchanged);
-        OnPropertyChanged(nameof(CurrentItems));
-        Warnings = DescribeWarnings(snapshot);
+        liveSnapshot = snapshot;
+        await ShowLiveComparisonAsync(token);
         StatusMessage = Format("Snapshots.Saved", path);
     });
 
     public Task CompareCurrentAsync(string baselinePath) => RunAsync(async token =>
     {
         SelectedBaselineVersion = HistoryVersions.FirstOrDefault(item => item.FilePath == baselinePath);
-        SelectedCurrentSource = CurrentSources.FirstOrDefault(item => item.FilePath is null);
         ClearResults();
         var baseline = await ModSnapshotFile.ReadAsync(baselinePath, token);
         var current = await snapshotService.CaptureAsync(token);
+        liveSnapshot = current;
+        IsFileComparison = false;
+        OnPropertyChanged(nameof(CurrentSourceLabel));
         ShowComparison(baseline, current);
     });
 
     public Task CompareFilesAsync(string baselinePath, string currentPath) => RunAsync(async token =>
     {
         SelectedBaselineVersion = HistoryVersions.FirstOrDefault(item => item.FilePath == baselinePath);
-        SelectedCurrentSource = CurrentSources.FirstOrDefault(item => item.FilePath == currentPath);
         ClearResults();
+        IsFileComparison = true;
+        OnPropertyChanged(nameof(CurrentSourceLabel));
         var baseline = await ModSnapshotFile.ReadAsync(baselinePath, token);
         var current = await ModSnapshotFile.ReadAsync(currentPath, token);
         ShowComparison(baseline, current);
@@ -245,7 +241,6 @@ public sealed class ModSnapshotsViewModel(
     private async Task RefreshHistoryAsync(CancellationToken cancellationToken)
     {
         var previousBaseline = SelectedBaselineVersion?.FilePath;
-        var previousCurrent = SelectedCurrentSource?.FilePath;
         var result = await history.ListAsync(cancellationToken);
         HistoryVersions = result.Entries.Select(entry =>
         {
@@ -255,15 +250,10 @@ public sealed class ModSnapshotsViewModel(
                 Format("Snapshots.VersionLabel", entry.CapturedAtUtc.ToLocalTime(), entry.ModCount, shortVersion),
                 entry.SourceLibrary);
         }).ToArray();
-        CurrentSources = new[] { new SnapshotSourceViewModel(null, text("Snapshots.LiveLibrary"), string.Empty) }
-            .Concat(HistoryVersions).ToArray();
         OnPropertyChanged(nameof(HistoryVersions));
-        OnPropertyChanged(nameof(CurrentSources));
         SelectedBaselineVersion = HistoryVersions.FirstOrDefault(item => item.FilePath == previousBaseline)
             ?? (HistoryVersions.Count > 0 ? HistoryVersions[0] : null);
-        SelectedCurrentSource = CurrentSources.FirstOrDefault(item => item.FilePath == previousCurrent) ?? CurrentSources[0];
         HistoryWarning = result.UnreadableCount == 0 ? string.Empty : Format("Snapshots.UnreadableHistory", result.UnreadableCount);
-        hasLoadedHistory = true;
     }
 
     private void RejectManagedVersionOverwrite(string path)

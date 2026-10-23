@@ -42,7 +42,9 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0" Margin="0,0,10,0">
+            <TabControl x:Name="BrowserSidebar" Grid.Column="0" Margin="0,0,10,0">
+            <TabItem Header="{DynamicResource Download.Queue}">
+            <Grid Margin="6">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="2*" />
@@ -141,6 +143,53 @@
                                Margin="0,4,0,0" />
                 </StackPanel>
             </Grid>
+            </TabItem>
+            <TabItem Header="{DynamicResource Browser.Favorites}">
+                <Grid x:Name="FavoritesPanel" Margin="6">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Margin="0,0,0,10">
+                        <TextBlock Text="{DynamicResource Browser.FavoritesHint}" TextWrapping="Wrap" Foreground="#555555" />
+                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                            <TextBlock Text="{DynamicResource Browser.FavoritesCount}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Items.Count}" FontWeight="SemiBold" Margin="5,0,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+                    <ListBox x:Name="BrowserFavoritesList" Grid.Row="1" ItemsSource="{Binding Items}"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="4">
+                                    <TextBlock Text="{Binding DisplayTitle}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayTitle}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding WorkshopId}" Foreground="Gray" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <WrapPanel Grid.Row="2" Margin="0,8,0,0" IsEnabled="{Binding IsIdle}">
+                        <WrapPanel.Style>
+                            <Style TargetType="WrapPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedItem, ElementName=BrowserFavoritesList}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </WrapPanel.Style>
+                        <Button Content="{DynamicResource Browser.OpenFavorite}" Click="OpenFavorite_Click" Padding="10,6" Margin="0,0,6,6" />
+                        <Button Content="{DynamicResource Browser.DownloadFavorite}" Click="DownloadFavorite_Click" Padding="10,6" Margin="0,0,6,6"
+                                IsEnabled="{Binding DataContext.IsIdle, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        <Button Content="{DynamicResource Browser.RemoveFavorite}" Click="RemoveFavorite_Click" Padding="10,6" Margin="0,0,6,6" />
+                    </WrapPanel>
+                    <TextBlock Grid.Row="3" Text="{Binding LastError}" TextWrapping="Wrap" Foreground="Firebrick" />
+                </Grid>
+            </TabItem>
+            </TabControl>
 
             <GridSplitter Grid.Column="1"
                           Width="8"
@@ -172,6 +221,8 @@
                     <Button Content="{DynamicResource Browser.Reload}"
                             Click="Reload_Click"
                             Padding="12,6" />
+                    <Button x:Name="FavoriteCurrentButton" Content="{DynamicResource Browser.FavoriteCurrent}"
+                            Foreground="#916600" Click="FavoriteCurrent_Click" IsEnabled="False" Padding="12,6" Margin="8,0,0,0" />
                 </StackPanel>
 
                 <TextBlock x:Name="PageTitleText"

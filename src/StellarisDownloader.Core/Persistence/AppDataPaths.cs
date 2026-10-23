@@ -16,6 +16,7 @@ public sealed class AppDataPaths
         PreviewCacheDirectory = Path.Combine(CacheDirectory, "previews");
         LogsDirectory = Path.Combine(RootDirectory, "logs");
         SnapshotsDirectory = Path.Combine(RootDirectory, "snapshots");
+        WorkshopFavoritesFile = Path.Combine(RootDirectory, "workshop-favorites.json");
     }
 
     public string RootDirectory { get; }
@@ -33,6 +34,8 @@ public sealed class AppDataPaths
     public string LogsDirectory { get; }
 
     public string SnapshotsDirectory { get; }
+
+    public string WorkshopFavoritesFile { get; }
 
     public static AppDataPaths CreateDefault()
     {

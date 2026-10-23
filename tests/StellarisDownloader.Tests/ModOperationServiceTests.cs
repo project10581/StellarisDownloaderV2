@@ -10,6 +10,36 @@ public sealed class ModOperationServiceTests
     private static readonly DateTimeOffset InitialTime = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset CompletionTime = new(2026, 7, 17, 0, 0, 0, TimeSpan.Zero);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReportsEachItemBeforeTheNextDownloadAndPreservesSuccessWhenLaterDownloadThrows(bool cancel)
+    {
+        var progress = new ResultProgress();
+        using var fixture = await ModOperationFixture.CreateAsync((request, _) =>
+        {
+            if (request.WorkshopId == "100") { return Task.FromResult(Success(request)); }
+            Assert.Equal("100", Assert.Single(progress.Results).WorkshopId);
+            if (cancel) { throw new OperationCanceledException(); }
+            throw new IOException("Download failed.");
+        });
+        var result = await fixture.Service.DownloadBatchAsync(
+            [fixture.Request("100"), fixture.Request("200")], progress);
+        Assert.Equal(OperationStatus.Succeeded, result.Results[0].Status);
+        Assert.Equal(cancel ? OperationStatus.Cancelled : OperationStatus.Failed, result.Results[1].Status);
+        Assert.Equal(2, progress.Results.Count);
+        Assert.NotNull(await fixture.Repository.GetAsync(fixture.LibraryRoot, "100"));
+    }
+
+    private sealed class ResultProgress : IProgress<OperationProgress>
+    {
+        public List<DownloadResult> Results { get; } = [];
+        public void Report(OperationProgress value)
+        {
+            if (value.ItemResult is { } result) { Results.Add(result); }
+        }
+    }
+
     [Fact]
     public async Task DownloadQueueDeduplicatesRunsSequentiallyAndWritesOneFinalRecordPerSuccess()
     {

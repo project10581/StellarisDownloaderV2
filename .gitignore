@@ -64,6 +64,8 @@ BenchmarkDotNet.Artifacts/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+.playwright-cli/
+output/playwright/
 
 # Tye
 .tye/

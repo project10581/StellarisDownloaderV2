@@ -244,7 +244,7 @@ public sealed class CompiledXamlTests
     private static InvalidOperationException UnexpectedFactoryCall() =>
         new("The XAML load test must not open child windows.");
 
-    private sealed class UnexpectedWorkshopClient : IWorkshopClient
+    internal sealed class UnexpectedWorkshopClient : IWorkshopClient
     {
         public Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataBatchAsync(
             IReadOnlyCollection<string> workshopIds,
@@ -253,7 +253,7 @@ public sealed class CompiledXamlTests
             throw new InvalidOperationException("The XAML load test must not query Workshop.");
     }
 
-    private sealed class UnexpectedModOperationService : IModOperationService
+    internal sealed class UnexpectedModOperationService : IModOperationService
     {
         public Task<DownloadBatchResult> DownloadBatchAsync(
             IReadOnlyCollection<DownloadRequest> requests,

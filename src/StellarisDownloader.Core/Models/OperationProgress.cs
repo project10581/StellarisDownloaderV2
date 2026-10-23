@@ -5,4 +5,8 @@ public sealed record OperationProgress(
     int Completed,
     int Total,
     string? WorkshopId,
-    string Message);
+    string Message)
+{
+    // Report verified download results separately from informational SteamCMD/metadata progress.
+    public DownloadResult? ItemResult { get; init; }
+}

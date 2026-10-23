@@ -405,11 +405,32 @@ public sealed class ModOperationService : IModOperationService
                 normalizedRequests.Count,
                 request.WorkshopId,
                 $"Downloading queue item {index + 1} of {normalizedRequests.Count}."));
-            var result = await steamCmdService.DownloadAsync(
-                request,
-                progress,
-                cancellationToken).ConfigureAwait(false);
+            DownloadResult result;
+            try
+            {
+                result = await steamCmdService.DownloadAsync(request, progress, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                result = CancelledBeforeStart(request) with { Error = "Download was cancelled." };
+            }
+            catch (Exception exception) when (IsOperationalFailure(exception))
+            {
+                result = new DownloadResult
+                {
+                    WorkshopId = request.WorkshopId,
+                    Status = OperationStatus.Failed,
+                    ContentPath = BuildContentPath(request),
+                    Error = exception.Message,
+                };
+            }
             results.Add(result);
+            progress?.Report(new OperationProgress(
+                "DownloadItemCompleted", index + 1, normalizedRequests.Count,
+                request.WorkshopId, $"{request.WorkshopId}: {result.Status}")
+            {
+                ItemResult = result,
+            });
             if (result.Status == OperationStatus.Cancelled)
             {
                 AddCancelledRemainder(normalizedRequests, index + 1, results);

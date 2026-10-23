@@ -8,6 +8,65 @@ namespace StellarisDownloader.Tests;
 
 public sealed class DownloadQueueViewModelTests
 {
+    [Theory]
+    [InlineData("complete", OperationStatus.Succeeded)]
+    [InlineData("failure", OperationStatus.Succeeded)]
+    [InlineData("cancel", OperationStatus.Succeeded)]
+    [InlineData("complete", OperationStatus.Failed)]
+    public void EachVerifiedResultAppearsBeforeBatchCompletionAndSurvivesLaterProgress(string outcome, OperationStatus firstStatus)
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var operations = new QueueModOperationService(async (_, progress, token) =>
+            {
+                progress!.Report(new OperationProgress("DownloadItemCompleted", 1, 2, "100", "Finished first item")
+                {
+                    ItemResult = Result("100", firstStatus),
+                });
+                progress.Report(new OperationProgress("DownloadingQueue", 1, 2, "200", "Starting second item"));
+                // A metadata update for the first item must not put it back into Downloading.
+                progress.Report(new OperationProgress("WorkshopMetadata", 0, 1, "100", "Metadata update"));
+                entered.SetResult();
+                await finish.Task.WaitAsync(token);
+                if (outcome == "failure") { throw new IOException("Batch finalization failed."); }
+                return new DownloadBatchResult
+                {
+                    Results = [Result("100", firstStatus), Result("200", OperationStatus.Succeeded)],
+                };
+            });
+            using var viewModel = CreateViewModel(operations: operations);
+            await viewModel.EnqueueAsync("100\n200");
+            var run = viewModel.StartAsync();
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                Assert.True(viewModel.IsBusy);
+                Assert.False(run.IsCompleted);
+                Assert.Equal(firstStatus == OperationStatus.Succeeded ? DownloadQueueItemStatus.Succeeded : DownloadQueueItemStatus.Failed,
+                    viewModel.Items[0].Status);
+                Assert.Equal(DownloadQueueItemStatus.Downloading, viewModel.Items[1].Status);
+                Assert.Equal(firstStatus == OperationStatus.Succeeded ? 1 : 0, viewModel.SucceededCount);
+                Assert.Equal(firstStatus == OperationStatus.Failed ? 1 : 0, viewModel.FailedCount);
+                Assert.Equal(1, viewModel.ProgressCompleted);
+                Assert.Equal("200", viewModel.CurrentWorkshopId);
+                if (outcome == "cancel") { viewModel.Cancel(); }
+            }
+            finally { finish.TrySetResult(); }
+            await run;
+            Assert.Equal(firstStatus == OperationStatus.Succeeded ? DownloadQueueItemStatus.Succeeded : DownloadQueueItemStatus.Failed,
+                viewModel.Items[0].Status);
+            Assert.Equal(outcome switch
+            {
+                "cancel" => DownloadQueueItemStatus.Cancelled,
+                "failure" => DownloadQueueItemStatus.Failed,
+                _ => DownloadQueueItemStatus.Succeeded,
+            }, viewModel.Items[1].Status);
+        });
+    }
+
     [Fact]
     public void EnqueueParsesDeduplicatesReportsInvalidAndResolvesTitles()
     {

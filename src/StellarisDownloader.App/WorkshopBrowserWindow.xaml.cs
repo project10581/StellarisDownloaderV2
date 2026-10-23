@@ -11,6 +11,7 @@ using Microsoft.Web.WebView2.Core;
 using StellarisDownloader.App.Models;
 using StellarisDownloader.App.Services;
 using StellarisDownloader.App.ViewModels;
+using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App;
@@ -24,18 +25,26 @@ public partial class WorkshopBrowserWindow : Window
 
     private readonly DownloadQueueViewModel viewModel;
     private readonly IInstalledWorkshopStateProvider installedStateProvider;
+    private readonly WorkshopFavoritesViewModel favorites;
+    private int syncVersion;
+    private bool closed;
     private string? currentWorkshopId;
     private bool browserInitialized;
 
     public WorkshopBrowserWindow(
         DownloadQueueViewModel viewModel,
-        IInstalledWorkshopStateProvider installedStateProvider)
+        IInstalledWorkshopStateProvider installedStateProvider,
+        WorkshopFavoritesViewModel favorites)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(installedStateProvider);
+        ArgumentNullException.ThrowIfNull(favorites);
         InitializeComponent();
         this.viewModel = viewModel;
         this.installedStateProvider = installedStateProvider;
+        this.favorites = favorites;
+        FavoritesPanel.DataContext = favorites;
+        favorites.PropertyChanged += Favorites_PropertyChanged;
         viewModel.PropertyChanged += ViewModel_PropertyChanged;
         ((INotifyCollectionChanged)viewModel.Items).CollectionChanged += Items_CollectionChanged;
         DataContext = viewModel;
@@ -43,6 +52,9 @@ public partial class WorkshopBrowserWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        closed = true;
+        browserInitialized = false;
+        favorites.PropertyChanged -= Favorites_PropertyChanged;
         viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ((INotifyCollectionChanged)viewModel.Items).CollectionChanged -= Items_CollectionChanged;
         WorkshopWebView.Dispose();
@@ -58,8 +70,11 @@ public partial class WorkshopBrowserWindow : Window
 
         try
         {
+            await favorites.LoadAsync().ConfigureAwait(true);
+            if (closed) { return; }
             _ = CoreWebView2Environment.GetAvailableBrowserVersionString(null);
             await WorkshopWebView.EnsureCoreWebView2Async().ConfigureAwait(true);
+            if (closed) { return; }
             ConfigureBrowser();
             browserInitialized = true;
             WorkshopWebView.Visibility = Visibility.Visible;
@@ -154,6 +169,7 @@ public partial class WorkshopBrowserWindow : Window
                 ? workshopId
                 : null;
         AddCurrentButton.IsEnabled = currentWorkshopId is not null && !viewModel.IsBusy;
+        UpdateFavoriteCurrentButton();
     }
 
     private void Core_DocumentTitleChanged(object? sender, object e)
@@ -204,8 +220,16 @@ public partial class WorkshopBrowserWindow : Window
 
         try
         {
-            await viewModel.EnqueueAsync(
-                string.Join(Environment.NewLine, validation.WorkshopIds)).ConfigureAwait(true);
+            if (validation.MessageType == "enqueueWorkshopIds")
+            {
+                await viewModel.EnqueueAsync(
+                    string.Join(Environment.NewLine, validation.WorkshopIds)).ConfigureAwait(true);
+            }
+            else
+            {
+                await favorites.SetFavoriteAsync(validation.WorkshopIds[0],
+                    validation.MessageType == "addWorkshopFavorite", validation.Title).ConfigureAwait(true);
+            }
             await SyncBrowserStateAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
@@ -267,8 +291,10 @@ public partial class WorkshopBrowserWindow : Window
 
     private async Task SyncBrowserStateAsync()
     {
+        var version = ++syncVersion;
         var source = GetCurrentSource();
         if (!browserInitialized
+            || favorites.IsBusy
             || source is null
             || !SteamCommunitySecurityPolicy.IsTrustedMessageSource(source))
         {
@@ -279,7 +305,7 @@ public partial class WorkshopBrowserWindow : Window
         {
             var installedIds = await installedStateProvider
                 .GetInstalledWorkshopIdsAsync().ConfigureAwait(true);
-            if (!IsCurrentDocument(source))
+            if (closed || version != syncVersion || !IsCurrentDocument(source))
             {
                 return;
             }
@@ -288,7 +314,8 @@ public partial class WorkshopBrowserWindow : Window
                 .Select(item => item.WorkshopId)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            var stateJson = JsonSerializer.Serialize(new { queuedIds, installedIds });
+            var favoriteIds = favorites.Items.Select(item => item.WorkshopId).ToArray();
+            var stateJson = JsonSerializer.Serialize(new { queuedIds, installedIds, favoriteIds });
             await WorkshopWebView.CoreWebView2.ExecuteScriptAsync(
                 $"window.__stellarisDownloaderWorkshopBridge?.syncState({stateJson});")
                 .ConfigureAwait(true);
@@ -301,6 +328,66 @@ public partial class WorkshopBrowserWindow : Window
         {
             BrowserStatusText.Text = exception.Message;
             BrowserStatusText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void Favorites_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        UpdateFavoriteCurrentButton();
+        if (e.PropertyName == nameof(WorkshopFavoritesViewModel.LastError) && favorites.LastError is { } error)
+        {
+            BrowserStatusText.Text = error;
+            BrowserStatusText.Visibility = Visibility.Visible;
+        }
+        if (e.PropertyName == nameof(WorkshopFavoritesViewModel.IsBusy) && !favorites.IsBusy)
+        {
+            _ = SyncBrowserStateAsync();
+        }
+    }
+
+    private void UpdateFavoriteCurrentButton()
+    {
+        FavoriteCurrentButton.IsEnabled = currentWorkshopId is not null && !favorites.IsBusy;
+        var saved = currentWorkshopId is not null && favorites.Contains(currentWorkshopId);
+        FavoriteCurrentButton.Content = TryFindResource(saved ? "Browser.UnfavoriteCurrent" : "Browser.FavoriteCurrent");
+    }
+
+    private async void FavoriteCurrent_Click(object sender, RoutedEventArgs e)
+    {
+        if (currentWorkshopId is { } id)
+        {
+            var title = WorkshopWebView.CoreWebView2.DocumentTitle;
+            await favorites.SetFavoriteAsync(id, !favorites.Contains(id), title[..Math.Min(title.Length, 1024)]).ConfigureAwait(true);
+        }
+    }
+
+    private void OpenFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        if (browserInitialized && BrowserFavoritesList.SelectedItem is WorkshopFavorite favorite)
+        {
+            WorkshopWebView.CoreWebView2.Navigate($"https://steamcommunity.com/sharedfiles/filedetails/?id={favorite.WorkshopId}");
+        }
+    }
+
+    private async void DownloadFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        if (BrowserFavoritesList.SelectedItem is WorkshopFavorite favorite)
+        {
+            try
+            {
+                await viewModel.EnqueueAsync(favorite.WorkshopId).ConfigureAwait(true);
+                BrowserSidebar.SelectedIndex = 0;
+                await SyncBrowserStateAsync().ConfigureAwait(true);
+            }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    private async void RemoveFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        if (BrowserFavoritesList.SelectedItem is WorkshopFavorite favorite)
+        {
+            await favorites.SetFavoriteAsync(favorite.WorkshopId, false).ConfigureAwait(true);
         }
     }
 
