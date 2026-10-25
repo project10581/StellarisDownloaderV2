@@ -170,6 +170,28 @@ public partial class App : Application, IDisposable
                 CreateApplicationUpdateWindow,
                 CreateSnapshotsWindow);
             MainWindow = mainWindow;
+            var waitingForFavorites = false;
+            mainWindow.Closing += async (_, args) =>
+            {
+                if (args.Cancel || !favoritesViewModel.IsBusy)
+                {
+                    return;
+                }
+
+                args.Cancel = true;
+                if (waitingForFavorites)
+                {
+                    return;
+                }
+
+                waitingForFavorites = true;
+                await favoritesViewModel.FlushAsync().ConfigureAwait(true);
+                waitingForFavorites = false;
+                if (favoritesViewModel.LastError is null)
+                {
+                    mainWindow.Close();
+                }
+            };
             mainWindow.Show();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
             await viewModel.InitializeAsync().ConfigureAwait(true);

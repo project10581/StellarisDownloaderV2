@@ -1,10 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using StellarisDownloader.Core.Models;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.Core.Persistence;
 
-public sealed class WorkshopFavoritesStore(string path) : IDisposable
+public sealed class WorkshopFavoritesStore(string path) : IWorkshopFavoritesStore, IDisposable
 {
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
@@ -67,7 +68,14 @@ public sealed class WorkshopFavoritesStore(string path) : IDisposable
                     stream.Flush(flushToDisk: true);
                 }
                 cancellationToken.ThrowIfCancellationRequested();
-                File.Move(temporaryPath, filePath, overwrite: true);
+                if (File.Exists(filePath))
+                {
+                    File.Replace(temporaryPath, filePath, filePath + ".bak", ignoreMetadataErrors: true);
+                }
+                else
+                {
+                    File.Move(temporaryPath, filePath);
+                }
             }
             finally { File.Delete(temporaryPath); }
             return items;

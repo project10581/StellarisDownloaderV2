@@ -28,6 +28,8 @@ public partial class WorkshopBrowserWindow : Window
     private readonly WorkshopFavoritesViewModel favorites;
     private int syncVersion;
     private bool closed;
+    private bool waitingToClose;
+    private IReadOnlyList<string> knownInstalledIds = [];
     private string? currentWorkshopId;
     private bool browserInitialized;
 
@@ -59,6 +61,29 @@ public partial class WorkshopBrowserWindow : Window
         ((INotifyCollectionChanged)viewModel.Items).CollectionChanged -= Items_CollectionChanged;
         WorkshopWebView.Dispose();
         base.OnClosed(e);
+    }
+
+    protected override async void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (e.Cancel || !favorites.IsBusy)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        if (waitingToClose)
+        {
+            return;
+        }
+
+        waitingToClose = true;
+        await favorites.FlushAsync().ConfigureAwait(true);
+        waitingToClose = false;
+        if (!closed && favorites.LastError is null)
+        {
+            Close();
+        }
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -227,14 +252,31 @@ public partial class WorkshopBrowserWindow : Window
             }
             else
             {
-                await favorites.SetFavoriteAsync(validation.WorkshopIds[0],
+                var id = validation.WorkshopIds[0];
+                var saved = await favorites.SetFavoriteAsync(id,
                     validation.MessageType == "addWorkshopFavorite", validation.Title).ConfigureAwait(true);
+                if (IsCurrentDocument(source))
+                {
+                    var confirmation = JsonSerializer.Serialize(new
+                    {
+                        id,
+                        favorite = favorites.Contains(id),
+                        error = saved ? null : favorites.LastError,
+                    });
+                    await WorkshopWebView.CoreWebView2.ExecuteScriptAsync(
+                        $"window.__stellarisDownloaderWorkshopBridge?.confirmFavorite({confirmation});").ConfigureAwait(true);
+                }
             }
             await SyncBrowserStateAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
             // Closing or cancelling a lookup leaves the shared queue in a valid state.
+        }
+        catch (Exception exception) when (IsBrowserStateFailure(exception))
+        {
+            BrowserStatusText.Text = exception.Message;
+            BrowserStatusText.Visibility = Visibility.Visible;
         }
     }
 
@@ -303,12 +345,22 @@ public partial class WorkshopBrowserWindow : Window
 
         try
         {
-            var installedIds = await installedStateProvider
-                .GetInstalledWorkshopIdsAsync().ConfigureAwait(true);
-            if (closed || version != syncVersion || !IsCurrentDocument(source))
+            var installedIds = knownInstalledIds;
+            try
+            {
+                installedIds = await installedStateProvider.GetInstalledWorkshopIdsAsync().ConfigureAwait(true);
+            }
+            catch (Exception exception) when (IsBrowserStateFailure(exception))
+            {
+                // A missing/unreadable mod library must not prevent restoring browser favorites.
+                BrowserStatusText.Text = exception.Message;
+                BrowserStatusText.Visibility = Visibility.Visible;
+            }
+            if (closed || version != syncVersion || favorites.IsBusy || !IsCurrentDocument(source))
             {
                 return;
             }
+            knownInstalledIds = installedIds;
 
             var queuedIds = viewModel.Items
                 .Select(item => item.WorkshopId)

@@ -1,11 +1,11 @@
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using StellarisDownloader.Core.Models;
-using StellarisDownloader.Core.Persistence;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class WorkshopFavoritesViewModel(WorkshopFavoritesStore store) : ObservableObject
+public sealed class WorkshopFavoritesViewModel(IWorkshopFavoritesStore store) : ObservableObject
 {
     private IReadOnlyList<WorkshopFavorite> items = [];
     private string? lastError;
@@ -20,17 +20,29 @@ public sealed class WorkshopFavoritesViewModel(WorkshopFavoritesStore store) : O
 
     public Task LoadAsync() => RunAsync(() => store.LoadAsync());
 
-    public Task SetFavoriteAsync(string id, bool favorite, string? title = null) =>
+    public Task<bool> SetFavoriteAsync(string id, bool favorite, string? title = null) =>
         RunAsync(() => store.SetFavoriteAsync(id, favorite, title));
 
-    private Task RunAsync(Func<Task<IReadOnlyList<WorkshopFavorite>>> operation)
+    public async Task FlushAsync()
     {
-        var previous = pendingOperation;
-        pendingOperation = RunAfterAsync(previous, operation);
-        return pendingOperation;
+        Task operation;
+        do
+        {
+            operation = pendingOperation;
+            await operation;
+        }
+        while (!ReferenceEquals(operation, pendingOperation));
     }
 
-    private async Task RunAfterAsync(Task previous, Func<Task<IReadOnlyList<WorkshopFavorite>>> operation)
+    private Task<bool> RunAsync(Func<Task<IReadOnlyList<WorkshopFavorite>>> operation)
+    {
+        var previous = pendingOperation;
+        var next = RunAfterAsync(previous, operation);
+        pendingOperation = next;
+        return next;
+    }
+
+    private async Task<bool> RunAfterAsync(Task previous, Func<Task<IReadOnlyList<WorkshopFavorite>>> operation)
     {
         pendingOperations++;
         OnPropertyChanged(nameof(IsBusy));
@@ -40,11 +52,13 @@ public sealed class WorkshopFavoritesViewModel(WorkshopFavoritesStore store) : O
             await previous;
             LastError = null;
             Items = await operation();
+            return true;
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
             or ArgumentException or InvalidOperationException or System.Security.SecurityException)
         {
             LastError = exception.Message;
+            return false;
         }
         finally
         {

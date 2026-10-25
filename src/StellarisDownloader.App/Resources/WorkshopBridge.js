@@ -10,6 +10,8 @@
     const queuedIds = new Set();
     const installedIds = new Set();
     const favoriteIds = new Set();
+    const pendingFavoriteIds = new Set();
+    const favoriteErrors = new Map();
     const recordsByTarget = new Map();
     const buttonSize = 30;
     const buttonInset = 6;
@@ -248,10 +250,13 @@
 
     function applyFavoriteState(button, workshopId) {
         const saved = favoriteIds.has(workshopId);
+        const pending = pendingFavoriteIds.has(workshopId);
         button.dataset.workshopId = workshopId;
-        button.dataset.state = saved ? "favorited" : "unsaved";
-        button.textContent = saved ? "\u2605" : "\u2606";
-        button.title = saved ? "Remove from saved mods" : "Save for later (no download)";
+        button.dataset.state = pending ? "saving" : saved ? "favorited" : "unsaved";
+        button.textContent = pending ? "\u2026" : saved ? "\u2605" : "\u2606";
+        button.title = pending ? "Saving to this computer..." : favoriteErrors.get(workshopId)
+            || (saved ? "Remove from saved mods" : "Save for later (no download)");
+        button.disabled = pending;
         button.style.background = "#f2c94c";
         button.style.color = "#332600";
         button.setAttribute("aria-label", button.title);
@@ -298,11 +303,13 @@
             event.preventDefault();
             event.stopImmediatePropagation();
             const currentId = star.dataset.workshopId || "";
-            if (!numericIdPattern.test(currentId) || !window.chrome || !window.chrome.webview) {
+            if (!numericIdPattern.test(currentId) || pendingFavoriteIds.has(currentId)
+                || !window.chrome || !window.chrome.webview) {
                 return;
             }
             const saved = favoriteIds.has(currentId);
-            if (saved) { favoriteIds.delete(currentId); } else { favoriteIds.add(currentId); }
+            pendingFavoriteIds.add(currentId);
+            favoriteErrors.delete(currentId);
             refreshButtonStates();
             const message = { type: saved ? "removeWorkshopFavorite" : "addWorkshopFavorite", ids: [currentId] };
             if (!saved) { message.title = previewTitle(target); }
@@ -376,7 +383,7 @@
             const hovered = pointer && pointer.x >= visible.left && pointer.x <= visible.right
                 && pointer.y >= visible.top && pointer.y <= visible.bottom;
             const showDownload = hovered || focused || record.button.dataset.state !== "available";
-            const showStar = hovered || focused || record.star.dataset.state === "favorited";
+            const showStar = hovered || focused || record.star.dataset.state !== "unsaved";
             const size = Math.min(buttonSize, (visible.right - visible.left - buttonInset * 2 - 4) / 2);
             [record.button, record.star].forEach(function (button, index) {
                 const show = index === 0 ? showDownload : showStar;
@@ -537,6 +544,16 @@
             replaceIds(favoriteIds, value.favoriteIds);
             refreshButtonStates();
             scheduleReconcile();
+        },
+        confirmFavorite: function (result) {
+            if (!result || !numericIdPattern.test(result.id)) {
+                return;
+            }
+            pendingFavoriteIds.delete(result.id);
+            if (result.favorite) { favoriteIds.add(result.id); } else { favoriteIds.delete(result.id); }
+            if (result.error) { favoriteErrors.set(result.id, "Could not save: " + result.error); }
+            else { favoriteErrors.delete(result.id); }
+            refreshButtonStates();
         },
         snapshot: function () {
             return {

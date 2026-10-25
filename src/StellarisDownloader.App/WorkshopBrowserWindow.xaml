@@ -79,12 +79,6 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
                 <WrapPanel Grid.Row="2" Margin="0,8,0,0">
-                    <Button x:Name="AddCurrentButton"
-                            Content="{DynamicResource Browser.AddCurrent}"
-                            Click="AddCurrent_Click"
-                            IsEnabled="False"
-                            Padding="10,6"
-                            Margin="0,0,6,6" />
                     <Button Content="{DynamicResource Download.RemoveSelected}"
                             Click="RemoveSelected_Click"
                             Padding="10,6"
@@ -205,7 +199,7 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <WrapPanel Margin="0,0,0,8">
                     <Button x:Name="BackButton"
                             Content="{DynamicResource Browser.Back}"
                             Click="Back_Click"
@@ -221,9 +215,13 @@
                     <Button Content="{DynamicResource Browser.Reload}"
                             Click="Reload_Click"
                             Padding="12,6" />
-                    <Button x:Name="FavoriteCurrentButton" Content="{DynamicResource Browser.FavoriteCurrent}"
-                            Foreground="#916600" Click="FavoriteCurrent_Click" IsEnabled="False" Padding="12,6" Margin="8,0,0,0" />
-                </StackPanel>
+                    <StackPanel x:Name="CurrentModActions" Orientation="Horizontal" Margin="8,0,0,0">
+                        <Button x:Name="AddCurrentButton" Content="{DynamicResource Browser.AddCurrent}"
+                                Click="AddCurrent_Click" IsEnabled="False" Padding="12,6" />
+                        <Button x:Name="FavoriteCurrentButton" Content="{DynamicResource Browser.FavoriteCurrent}"
+                                Foreground="#916600" Click="FavoriteCurrent_Click" IsEnabled="False" Padding="12,6" Margin="8,0,0,0" />
+                    </StackPanel>
+                </WrapPanel>
 
                 <TextBlock x:Name="PageTitleText"
                            Grid.Row="1"

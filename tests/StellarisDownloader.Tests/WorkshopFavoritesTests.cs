@@ -1,11 +1,93 @@
 using StellarisDownloader.App.Services;
 using StellarisDownloader.App.ViewModels;
+using StellarisDownloader.App;
+using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.Tests;
 
 public sealed class WorkshopFavoritesTests
 {
+    [Fact]
+    public void ClosingTheBrowserWaitsForTheFavoriteWriteBeforeDisposingTheWindow()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var directory = new TemporaryDirectory();
+            using var store = new WorkshopFavoritesStore(directory.GetPath("favorites.json"));
+            var delayed = new DelayedFavoritesStore(store);
+            var favorites = new WorkshopFavoritesViewModel(delayed);
+            using var queue = new DownloadQueueViewModel(new StubSettingsStore(new AppSettings()),
+                new CompiledXamlTests.UnexpectedWorkshopClient(), new CompiledXamlTests.UnexpectedModOperationService());
+            var browser = new WorkshopBrowserWindow(queue, new EmptyInstalledState(), favorites);
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            browser.Closed += (_, _) => closed.TrySetResult();
+            try
+            {
+                var save = favorites.SetFavoriteAsync("123", true, "Keep after restart");
+                Assert.True(favorites.IsBusy);
+                Assert.Empty(favorites.Items);
+                browser.Close();
+                Assert.False(closed.Task.IsCompleted);
+                delayed.AllowWrite.SetResult();
+                Assert.True(await save);
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                using var reopened = new WorkshopFavoritesStore(directory.GetPath("favorites.json"));
+                Assert.Equal("123", Assert.Single(await reopened.LoadAsync()).WorkshopId);
+            }
+            finally
+            {
+                delayed.AllowWrite.TrySetResult();
+                await favorites.FlushAsync();
+                browser.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task FlushWaitsForAllQueuedWritesAndFailedSaveDoesNotClaimSuccess()
+    {
+        using var directory = new TemporaryDirectory();
+        using var store = new WorkshopFavoritesStore(directory.GetPath("favorites.json"));
+        var delayed = new DelayedFavoritesStore(store);
+        var favorites = new WorkshopFavoritesViewModel(delayed);
+        var first = favorites.SetFavoriteAsync("123", true);
+        var second = favorites.SetFavoriteAsync("456", true);
+        var flush = favorites.FlushAsync();
+        Assert.False(flush.IsCompleted);
+        delayed.AllowWrite.SetResult();
+        await flush;
+        Assert.True(await first);
+        Assert.True(await second);
+        Assert.Equal(2, (await store.LoadAsync()).Count);
+        delayed.FailWrites = true;
+        Assert.False(await favorites.SetFavoriteAsync("789", true));
+        Assert.False(favorites.Contains("789"));
+        Assert.NotNull(favorites.LastError);
+    }
+
+    private sealed class DelayedFavoritesStore(IWorkshopFavoritesStore inner) : IWorkshopFavoritesStore
+    {
+        public TaskCompletionSource AllowWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool FailWrites { get; set; }
+        public Task<IReadOnlyList<WorkshopFavorite>> LoadAsync(CancellationToken cancellationToken = default) =>
+            inner.LoadAsync(cancellationToken);
+        public async Task<IReadOnlyList<WorkshopFavorite>> SetFavoriteAsync(
+            string workshopId, bool favorite, string? title = null, CancellationToken cancellationToken = default)
+        {
+            await AllowWrite.Task.WaitAsync(cancellationToken);
+            if (FailWrites) { throw new IOException("Disk unavailable."); }
+            return await inner.SetFavoriteAsync(workshopId, favorite, title, cancellationToken);
+        }
+    }
+
+    private sealed class EmptyInstalledState : IInstalledWorkshopStateProvider
+    {
+        public Task<IReadOnlyList<string>> GetInstalledWorkshopIdsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+    }
+
     [Fact]
     public async Task FavoritesPersistWithoutAConfiguredLibraryOrDownloadService()
     {
@@ -26,7 +108,9 @@ public sealed class WorkshopFavoritesTests
         Assert.NotEqual(default, saved.SavedAtUtc);
         await reopened.SetFavoriteAsync("100", false);
         Assert.Empty(await reopened.LoadAsync());
-        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!));
+        Assert.Equal(2, Directory.GetFiles(Path.GetDirectoryName(path)!).Length);
+        using var backup = new WorkshopFavoritesStore(path + ".bak");
+        Assert.Equal("100", Assert.Single(await backup.LoadAsync()).WorkshopId);
     }
 
     [Fact]
