@@ -54,6 +54,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     public bool IsInitialization { get; }
 
+    public AppSettings SavedSettings => committedSettings;
+
     public string? CorruptBackupPath { get; }
 
     public string LibraryRoot

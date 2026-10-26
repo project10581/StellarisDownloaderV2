@@ -1,10 +1,8 @@
-using System.IO;
-using System.Net.Http;
 using System.Windows;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using StellarisDownloader.App.Services;
 using StellarisDownloader.App.ViewModels;
-using StellarisDownloader.Core.Integrations;
 using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
 using StellarisDownloader.Core.Services;
@@ -13,16 +11,7 @@ namespace StellarisDownloader.App;
 
 public partial class App : Application, IDisposable
 {
-    private JsonSettingsStore? settingsStore;
-    private WorkshopFavoritesStore? favoritesStore;
-    private SqliteModRepository? modRepository;
-    private WriteOperationCoordinator? writeCoordinator;
-    private HttpClient? httpClient;
-    private WorkshopClient? workshopClient;
-    private SteamCmdService? steamCmdService;
-    private DownloadQueueViewModel? downloadQueueViewModel;
-    private AppUpdateService? appUpdateService;
-    private ApplicationUpdateViewModel? applicationUpdateViewModel;
+    private ServiceProvider? services;
     private bool disposed;
 
     public App()
@@ -57,231 +46,124 @@ public partial class App : Application, IDisposable
     {
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-
+        SettingsLoadResult? settings;
         try
         {
-            Log.Information("Initializing application services.");
-            var paths = AppDataPaths.CreateDefault();
-            paths.EnsureDirectories();
-
-            settingsStore = new JsonSettingsStore(paths.SettingsFile);
-            favoritesStore = new WorkshopFavoritesStore(paths.WorkshopFavoritesFile,
-                warning => Log.Warning("{FavoritesWarning}", warning));
-            var favoritesViewModel = new WorkshopFavoritesViewModel(favoritesStore);
-            modRepository = new SqliteModRepository(paths.DatabaseFile);
-            await modRepository.InitializeAsync().ConfigureAwait(true);
-
-            var loadedSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
-            var localizationService = new LocalizationService(Resources);
-            localizationService.SetLanguage(loadedSettings.Settings.Language);
-
-            writeCoordinator = new WriteOperationCoordinator();
-            httpClient = new HttpClient();
-            workshopClient = new WorkshopClient(httpClient);
-            var junctionPath = Path.Combine(
-                paths.SteamCmdDirectory,
-                "steamapps",
-                "workshop",
-                "content",
-                "281990");
-            var junctionManager = new WindowsJunctionManager();
-            var libraryService = new LibraryService(
-                settingsStore,
-                modRepository,
-                workshopClient,
-                junctionManager,
-                writeCoordinator,
-                junctionPath);
-
-            SettingsWindow CreateSettingsWindow(
-                SettingsLoadResult settingsResult,
-                bool isInitialization)
+            settings = await InitializeCoreAsync();
+            settings = await RunFirstTimeSetupIfNeededAsync(settings);
+            if (settings is null)
             {
-                var settingsViewModel = new SettingsViewModel(
-                    settingsStore,
-                    libraryService,
-                    localizationService,
-                    writeCoordinator,
-                    settingsResult.Settings,
-                    isInitialization,
-                    settingsResult.CorruptBackupPath);
-                return new SettingsWindow(settingsViewModel);
+                Shutdown();
+                return;
             }
 
-            if (loadedSettings.RequiresInitialization
-                || string.IsNullOrWhiteSpace(loadedSettings.Settings.LibraryRoot))
-            {
-                var setupWindow = CreateSettingsWindow(loadedSettings, isInitialization: true);
-                setupWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-                if (setupWindow.ShowDialog() is not true)
-                {
-                    Shutdown();
-                    return;
-                }
-            }
-
-            async Task<SettingsWindow> CreateRegularSettingsWindowAsync()
-            {
-                var currentSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
-                return CreateSettingsWindow(currentSettings, isInitialization: false);
-            }
-
-            steamCmdService = new SteamCmdService(
-                httpClient,
-                new ProcessRunner(),
-                paths.SteamCmdDirectory);
-            var modOperationService = new ModOperationService(
-                modRepository,
-                steamCmdService,
-                workshopClient,
-                junctionManager,
-                new WindowsFileDeletionService(),
-                writeCoordinator,
-                junctionPath);
-            downloadQueueViewModel = new DownloadQueueViewModel(
-                settingsStore,
-                workshopClient,
-                modOperationService);
-            appUpdateService = new AppUpdateService();
-            var installedStateProvider = new InstalledWorkshopStateProvider(
-                settingsStore,
-                modRepository);
-            var viewModel = new MainWindowViewModel(
-                settingsStore,
-                modRepository,
-                libraryService,
-                new PreviewImageService(httpClient),
-                modOperationService,
-                downloadQueueViewModel);
-            UpdateSelectionWindow CreateUpdateWindow() =>
-                new(new UpdateSelectionViewModel(settingsStore, modOperationService));
-
-            var snapshotService = new ModSnapshotService(settingsStore, modRepository, writeCoordinator);
-            var snapshotHistory = new ModSnapshotHistory(paths.SnapshotsDirectory);
-            ModSnapshotsWindow CreateSnapshotsWindow() =>
-                new(new ModSnapshotsViewModel(snapshotService, snapshotHistory, key => TryFindResource(key) as string ?? key));
-
-            MainWindow? mainWindow = null;
-            Task PrepareForAppUpdateRestartAsync()
-            {
-                return Dispatcher.InvokeAsync(() =>
-                {
-                    if (writeCoordinator.IsBusy)
-                    {
-                        throw new StellarisOperationException(
-                            "Wait for the active write operation before applying the update.");
-                    }
-
-                    (mainWindow ?? throw new InvalidOperationException(
-                        "The main window is not available for update preparation."))
-                        .PrepareForAppUpdateRestart();
-                    Log.Information("Restarting to apply an application update.");
-                }).Task;
-            }
-
-            applicationUpdateViewModel = new ApplicationUpdateViewModel(
-                appUpdateService,
-                PrepareForAppUpdateRestartAsync);
-            ApplicationUpdateWindow CreateApplicationUpdateWindow() =>
-                new(applicationUpdateViewModel, disposeViewModel: false);
-
-            mainWindow = new MainWindow(
-                viewModel,
-                downloadQueueViewModel,
-                applicationUpdateViewModel,
-                CreateRegularSettingsWindowAsync,
-                () => new DownloadQueueWindow(downloadQueueViewModel),
-                () => new WorkshopBrowserWindow(
-                    downloadQueueViewModel,
-                    installedStateProvider,
-                    favoritesViewModel),
-                CreateUpdateWindow,
-                CreateApplicationUpdateWindow,
-                CreateSnapshotsWindow);
-            MainWindow = mainWindow;
-            var waitingForFavorites = false;
-            mainWindow.Closing += async (_, args) =>
-            {
-                if (args.Cancel || !favoritesViewModel.IsBusy)
-                {
-                    return;
-                }
-
-                args.Cancel = true;
-                if (waitingForFavorites)
-                {
-                    return;
-                }
-
-                waitingForFavorites = true;
-                await favoritesViewModel.FlushAsync().ConfigureAwait(true);
-                waitingForFavorites = false;
-                if (favoritesViewModel.LastError is null)
-                {
-                    mainWindow.Close();
-                }
-            };
-            mainWindow.Show();
-            ShutdownMode = ShutdownMode.OnMainWindowClose;
-            await viewModel.InitializeAsync().ConfigureAwait(true);
-
-            var startupSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
-            if (startupSettings.Settings.CheckModUpdatesOnStartup
-                && viewModel.CanRunWriteOperations)
-            {
-                var startupUpdates = new UpdateSelectionViewModel(
-                    settingsStore,
-                    modOperationService);
-                await startupUpdates.CheckUpdatesAsync().ConfigureAwait(true);
-                if (startupUpdates.Items.Any(item => item.State != UpdateState.UpToDate))
-                {
-                    var updateWindow = new UpdateSelectionWindow(startupUpdates)
-                    {
-                        Owner = mainWindow,
-                    };
-                    updateWindow.ShowDialog();
-                    await viewModel.RefreshAsync().ConfigureAwait(true);
-                }
-                else
-                {
-                    startupUpdates.Dispose();
-                }
-            }
-
-            startupSettings = await settingsStore.LoadAsync().ConfigureAwait(true);
-            if (startupSettings.Settings.CheckAppUpdatesOnStartup)
-            {
-                try
-                {
-                    await applicationUpdateViewModel.CheckAsync().ConfigureAwait(true);
-                    if (!string.IsNullOrWhiteSpace(applicationUpdateViewModel.LastError))
-                    {
-                        Log.Warning(
-                            "Automatic application update check failed: {Error}",
-                            applicationUpdateViewModel.LastError);
-                    }
-                    else if (applicationUpdateViewModel.IsUpdateAvailable)
-                    {
-                        var applicationUpdateWindow = CreateApplicationUpdateWindow();
-                        applicationUpdateWindow.Owner = mainWindow;
-                        applicationUpdateWindow.ShowDialog();
-                    }
-                }
-                catch (Exception exception)
-                {
-                    Log.Warning(exception, "Automatic application update check failed.");
-                }
-            }
+            await ShowMainWindowAsync(settings);
         }
         catch (Exception exception)
         {
             Log.Error(exception, "Application startup failed.");
-            MessageBox.Show(
-                exception.Message,
-                "Stellaris Downloader",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            MessageBox.Show(exception.Message, "Stellaris Downloader", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(-1);
+            return;
+        }
+
+        await RunStartupChecksAsync(
+            () => CheckModUpdatesAsync(settings.Settings),
+            () => CheckApplicationUpdatesAsync(settings.Settings));
+    }
+
+    private async Task<SettingsLoadResult> InitializeCoreAsync()
+    {
+        Log.Information("Initializing application services.");
+        var paths = AppDataPaths.CreateDefault();
+        paths.EnsureDirectories();
+        services = ServiceRegistration.Create(this, paths);
+        await services.GetRequiredService<IModRepository>().InitializeAsync();
+        var settingsStore = services.GetRequiredService<ISettingsStore>();
+        var settings = await settingsStore.LoadAsync();
+        services.GetRequiredService<ILocalizationService>().SetLanguage(settings.Settings.Language);
+        return settings;
+    }
+
+    private Task<SettingsLoadResult?> RunFirstTimeSetupIfNeededAsync(SettingsLoadResult settings)
+    {
+        if (!settings.RequiresInitialization && !string.IsNullOrWhiteSpace(settings.Settings.LibraryRoot))
+        {
+            return Task.FromResult<SettingsLoadResult?>(settings);
+        }
+
+        var window = services!.GetRequiredService<IWindowFactory>().CreateSettingsWindow(settings, isInitialization: true);
+        window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        return Task.FromResult(window.ShowDialog() is true
+            ? new SettingsLoadResult(((SettingsViewModel)window.DataContext).SavedSettings, false, settings.CorruptBackupPath)
+            : null);
+    }
+
+    private async Task ShowMainWindowAsync(SettingsLoadResult settings)
+    {
+        services!.GetRequiredService<ILocalizationService>().SetLanguage(settings.Settings.Language);
+        var window = services!.GetRequiredService<IWindowFactory>().CreateMainWindow();
+        MainWindow = window;
+        window.Show();
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
+        await services!.GetRequiredService<MainWindowViewModel>().InitializeAsync();
+    }
+
+    internal static async Task RunStartupChecksAsync(Func<Task> checkModUpdates, Func<Task> checkApplicationUpdates)
+    {
+        try
+        {
+            await checkModUpdates();
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Automatic mod update check failed.");
+        }
+
+        try
+        {
+            await checkApplicationUpdates();
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Automatic application update check failed.");
+        }
+    }
+
+    private async Task CheckModUpdatesAsync(AppSettings settings)
+    {
+        var viewModel = services!.GetRequiredService<MainWindowViewModel>();
+        if (!settings.CheckModUpdatesOnStartup || !viewModel.CanRunWriteOperations) { return; }
+        var factory = services!.GetRequiredService<IWindowFactory>();
+        using var updates = factory.CreateUpdateViewModel();
+        await updates.CheckUpdatesAsync();
+        if (updates.LastError is { } error)
+        {
+            Log.Warning("Automatic mod update check failed: {Error}", error);
+        }
+        else if (updates.Items.Any(item => item.State != UpdateState.UpToDate))
+        {
+            var window = factory.CreateUpdateWindow(updates);
+            window.Owner = MainWindow;
+            window.ShowDialog();
+            await viewModel.RefreshAsync();
+        }
+    }
+
+    private async Task CheckApplicationUpdatesAsync(AppSettings settings)
+    {
+        if (!settings.CheckAppUpdatesOnStartup) { return; }
+        var updates = services!.GetRequiredService<ApplicationUpdateViewModel>();
+        await updates.CheckAsync();
+        if (updates.LastError is { } error)
+        {
+            Log.Warning("Automatic application update check failed: {Error}", error);
+        }
+        else if (updates.IsUpdateAvailable)
+        {
+            var window = services!.GetRequiredService<IWindowFactory>().CreateApplicationUpdateWindow();
+            window.Owner = MainWindow;
+            window.ShowDialog();
         }
     }
 
@@ -294,34 +176,12 @@ public partial class App : Application, IDisposable
 
     public void Dispose()
     {
-        if (disposed)
-        {
-            return;
-        }
-
+        if (disposed) { return; }
         disposed = true;
         DispatcherUnhandledException -= OnDispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
         AppDomain.CurrentDomain.UnhandledException -= OnDomainUnhandledException;
-        applicationUpdateViewModel?.Dispose();
-        appUpdateService?.Dispose();
-        downloadQueueViewModel?.Dispose();
-        steamCmdService?.Dispose();
-        workshopClient?.Dispose();
-        httpClient?.Dispose();
-        writeCoordinator?.Dispose();
-        modRepository?.Dispose();
-        settingsStore?.Dispose();
-        favoritesStore?.Dispose();
-        applicationUpdateViewModel = null;
-        appUpdateService = null;
-        downloadQueueViewModel = null;
-        steamCmdService = null;
-        workshopClient = null;
-        httpClient = null;
-        writeCoordinator = null;
-        modRepository = null;
-        settingsStore = null;
+        services?.Dispose();
         GC.SuppressFinalize(this);
     }
 }

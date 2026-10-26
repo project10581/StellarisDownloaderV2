@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly Func<UpdateSelectionWindow> updateWindowFactory;
     private readonly Func<ApplicationUpdateWindow> applicationUpdateWindowFactory;
     private readonly Func<ModSnapshotsWindow> snapshotsWindowFactory;
+    private readonly bool disposeViewModel;
     private DownloadQueueWindow? downloadWindow;
     private WorkshopBrowserWindow? browserWindow;
 
@@ -33,7 +34,8 @@ public partial class MainWindow : Window
         Func<WorkshopBrowserWindow> browserWindowFactory,
         Func<UpdateSelectionWindow> updateWindowFactory,
         Func<ApplicationUpdateWindow> applicationUpdateWindowFactory,
-        Func<ModSnapshotsWindow> snapshotsWindowFactory)
+        Func<ModSnapshotsWindow> snapshotsWindowFactory,
+        bool disposeViewModel = true)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(downloadQueueViewModel);
@@ -54,6 +56,7 @@ public partial class MainWindow : Window
         this.updateWindowFactory = updateWindowFactory;
         this.applicationUpdateWindowFactory = applicationUpdateWindowFactory;
         this.snapshotsWindowFactory = snapshotsWindowFactory;
+        this.disposeViewModel = disposeViewModel;
         DataContext = viewModel;
     }
 
@@ -279,7 +282,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        viewModel.Dispose();
+        if (disposeViewModel) { viewModel.Dispose(); }
         base.OnClosed(e);
     }
 
