@@ -1,8 +1,5 @@
-using System.Collections.Concurrent;
+using System.Collections;
 using System.Collections.ObjectModel;
-using System.IO;
-using System.Net.Http;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisDownloader.Core.Models;
@@ -10,32 +7,16 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
+public sealed partial class DownloadQueueViewModel : ObservableObject, IDisposable
 {
     private readonly ISettingsStore settingsStore;
     private readonly IWorkshopClient workshopClient;
     private readonly IModOperationService modOperationService;
-    private readonly SynchronizationContext uiContext;
-    private readonly int uiThreadId;
     private readonly SemaphoreSlim enqueueGate = new(1, 1);
     private readonly ObservableCollection<DownloadQueueItemViewModel> items = [];
     private readonly ObservableCollection<InvalidWorkshopInput> invalidInputs = [];
     private readonly ObservableCollection<string> logs = [];
-    private readonly AsyncRelayCommand enqueueCommand;
-    private readonly AsyncRelayCommand startCommand;
-    private readonly RelayCommand cancelCommand;
-    private readonly AsyncRelayCommand retryFailedCommand;
     private CancellationTokenSource? activeCancellation;
-    private string inputText = string.Empty;
-    private bool isBusy;
-    private string? currentStage;
-    private string? currentWorkshopId;
-    private int progressCompleted;
-    private int progressTotal;
-    private int succeededCount;
-    private int failedCount;
-    private int cancelledCount;
-    private string? lastError;
     private bool disposed;
 
     internal event Func<Task>? BatchCompleted;
@@ -43,186 +24,103 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
     public DownloadQueueViewModel(
         ISettingsStore settingsStore,
         IWorkshopClient workshopClient,
-        IModOperationService modOperationService,
-        SynchronizationContext? uiContext = null)
+        IModOperationService modOperationService)
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(workshopClient);
         ArgumentNullException.ThrowIfNull(modOperationService);
-
         this.settingsStore = settingsStore;
         this.workshopClient = workshopClient;
         this.modOperationService = modOperationService;
-        this.uiContext = uiContext
-            ?? SynchronizationContext.Current
-            ?? new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher);
-        uiThreadId = Environment.CurrentManagedThreadId;
-
         Items = new ReadOnlyObservableCollection<DownloadQueueItemViewModel>(items);
         InvalidInputs = new ReadOnlyObservableCollection<InvalidWorkshopInput>(invalidInputs);
         Logs = new ReadOnlyObservableCollection<string>(logs);
-
-        enqueueCommand = new AsyncRelayCommand(EnqueueInputTextAsync, CanEnqueue);
-        startCommand = new AsyncRelayCommand(
-            () => StartAsync(CancellationToken.None),
-            () => CanStart);
-        cancelCommand = new RelayCommand(Cancel, () => CanCancel);
-        retryFailedCommand = new AsyncRelayCommand(
-            RetryFailedCommandAsync,
-            () => !IsBusy && items.Any(item => item.Status == DownloadQueueItemStatus.Failed));
     }
 
     public ReadOnlyObservableCollection<DownloadQueueItemViewModel> Items { get; }
-
     public ReadOnlyObservableCollection<InvalidWorkshopInput> InvalidInputs { get; }
-
     public ReadOnlyObservableCollection<string> Logs { get; }
 
-    public IAsyncRelayCommand EnqueueCommand => enqueueCommand;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(EnqueueCommand))]
+    public partial string InputText { get; set; } = string.Empty;
 
-    public IAsyncRelayCommand StartCommand => startCommand;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart), nameof(IsIdle), nameof(CanCancel))]
+    [NotifyCanExecuteChangedFor(nameof(EnqueueCommand), nameof(StartCommand), nameof(CancelCommand),
+        nameof(RetryFailedCommand), nameof(RemoveSelectedCommand), nameof(ClearQueueCommand))]
+    public partial bool IsBusy { get; private set; }
 
-    public IRelayCommand CancelCommand => cancelCommand;
+    [ObservableProperty]
+    public partial string? CurrentStage { get; private set; }
 
-    public IAsyncRelayCommand RetryFailedCommand => retryFailedCommand;
+    [ObservableProperty]
+    public partial string? CurrentWorkshopId { get; private set; }
 
-    public string InputText
-    {
-        get => inputText;
-        set
-        {
-            if (SetProperty(ref inputText, value ?? string.Empty))
-            {
-                enqueueCommand.NotifyCanExecuteChanged();
-            }
-        }
-    }
+    [ObservableProperty]
+    public partial int ProgressCompleted { get; private set; }
 
-    public bool IsBusy
-    {
-        get => isBusy;
-        private set
-        {
-            if (SetProperty(ref isBusy, value))
-            {
-                OnPropertyChanged(nameof(CanStart));
-                OnPropertyChanged(nameof(IsIdle));
-                OnPropertyChanged(nameof(CanCancel));
-                NotifyCommandStates();
-            }
-        }
-    }
+    [ObservableProperty]
+    public partial int ProgressTotal { get; private set; }
+
+    [ObservableProperty]
+    public partial int SucceededCount { get; private set; }
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedCommand))]
+    public partial int FailedCount { get; private set; }
+
+    [ObservableProperty]
+    public partial int CancelledCount { get; private set; }
+
+    [ObservableProperty]
+    public partial string? LastError { get; private set; }
 
     public bool CanStart => !IsBusy && items.Any(IsStartable);
-
     public bool IsIdle => !IsBusy;
+    public bool CanCancel => IsBusy && activeCancellation is { IsCancellationRequested: false };
 
-    public bool CanCancel => IsBusy
-        && activeCancellation is not null
-        && !activeCancellation.IsCancellationRequested;
-
-    public string? CurrentStage
+    partial void OnInputTextChanged(string value)
     {
-        get => currentStage;
-        private set => SetProperty(ref currentStage, value);
-    }
-
-    public string? CurrentWorkshopId
-    {
-        get => currentWorkshopId;
-        private set => SetProperty(ref currentWorkshopId, value);
-    }
-
-    public int ProgressCompleted
-    {
-        get => progressCompleted;
-        private set => SetProperty(ref progressCompleted, value);
-    }
-
-    public int ProgressTotal
-    {
-        get => progressTotal;
-        private set => SetProperty(ref progressTotal, value);
-    }
-
-    public int SucceededCount
-    {
-        get => succeededCount;
-        private set => SetProperty(ref succeededCount, value);
-    }
-
-    public int FailedCount
-    {
-        get => failedCount;
-        private set => SetProperty(ref failedCount, value);
-    }
-
-    public int CancelledCount
-    {
-        get => cancelledCount;
-        private set => SetProperty(ref cancelledCount, value);
-    }
-
-    public string? LastError
-    {
-        get => lastError;
-        private set => SetProperty(ref lastError, value);
+        if (value is null) { InputText = string.Empty; }
     }
 
     public async Task<DownloadQueueEnqueueResult> EnqueueAsync(
-        string? input,
-        CancellationToken cancellationToken = default)
+        string? input, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         var parsed = WorkshopIdParser.Parse(input);
-        await enqueueGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await enqueueGate.WaitAsync(cancellationToken);
         try
         {
-            var state = await InvokeOnUiAsync(() =>
+            invalidInputs.Clear();
+            foreach (var invalidInput in parsed.InvalidInputs) { invalidInputs.Add(invalidInput); }
+            var existingIds = items.Select(item => item.WorkshopId).ToHashSet(StringComparer.Ordinal);
+            var addedItems = new List<DownloadQueueItemViewModel>();
+            var duplicates = 0;
+            foreach (var workshopId in parsed.WorkshopIds)
             {
-                invalidInputs.Clear();
-                foreach (var invalidInput in parsed.InvalidInputs)
+                if (!existingIds.Add(workshopId))
                 {
-                    invalidInputs.Add(invalidInput);
+                    duplicates++;
+                    continue;
                 }
 
-                var existingIds = items
-                    .Select(item => item.WorkshopId)
-                    .ToHashSet(StringComparer.Ordinal);
-                var addedItems = new List<DownloadQueueItemViewModel>();
-                var duplicates = 0;
-                foreach (var workshopId in parsed.WorkshopIds)
-                {
-                    if (!existingIds.Add(workshopId))
-                    {
-                        duplicates++;
-                        continue;
-                    }
-
-                    var item = new DownloadQueueItemViewModel(workshopId);
-                    item.BeginMetadataLookup();
-                    items.Add(item);
-                    addedItems.Add(item);
-                }
-
-                if (addedItems.Count > 0)
-                {
-                    logs.Add($"Added {addedItems.Count} Workshop item(s) to the download queue.");
-                }
-
-                NotifyQueueStateChanged();
-                return (Items: addedItems, DuplicateCount: duplicates);
-            }).ConfigureAwait(false);
-
-            if (state.Items.Count > 0)
-            {
-                await ResolveMetadataAsync(state.Items, cancellationToken).ConfigureAwait(false);
+                var item = new DownloadQueueItemViewModel(workshopId);
+                item.BeginMetadataLookup();
+                items.Add(item);
+                addedItems.Add(item);
             }
 
+            if (addedItems.Count > 0)
+            {
+                logs.Add($"Added {addedItems.Count} Workshop item(s) to the download queue.");
+            }
+
+            NotifyQueueStateChanged();
+            if (addedItems.Count > 0) { await ResolveMetadataAsync(addedItems, cancellationToken); }
             return new DownloadQueueEnqueueResult(
-                state.Items.Select(item => item.WorkshopId).ToArray(),
-                state.DuplicateCount,
-                parsed.InvalidInputs);
+                addedItems.Select(item => item.WorkshopId).ToArray(), duplicates, parsed.InvalidInputs);
         }
         finally
         {
@@ -230,56 +128,31 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanStart), AllowConcurrentExecutions = false)]
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var batch = await InvokeOnUiAsync(() =>
-        {
-            if (IsBusy)
-            {
-                return Array.Empty<DownloadQueueItemViewModel>();
-            }
-
-            var candidates = items.Where(IsStartable).ToArray();
-            if (candidates.Length == 0)
-            {
-                return candidates;
-            }
-
-            activeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            IsBusy = true;
-            LastError = null;
-            CurrentStage = "PreparingDownloadQueue";
-            CurrentWorkshopId = null;
-            ProgressCompleted = 0;
-            ProgressTotal = candidates.Length;
-            foreach (var item in candidates)
-            {
-                item.MarkReady();
-            }
-
-            logs.Add($"Starting download queue with {candidates.Length} item(s).");
-            NotifyQueueStateChanged();
-            return candidates;
-        }).ConfigureAwait(false);
-        if (batch.Length == 0)
-        {
-            return;
-        }
-
-        var cancellation = activeCancellation
-            ?? throw new InvalidOperationException("The queue cancellation source was not created.");
-        var pendingProgress = new ConcurrentQueue<Task>();
-        var progress = new CallbackProgress<OperationProgress>(value =>
-        {
-            pendingProgress.Enqueue(InvokeOnUiAsync(() => ApplyProgress(value, batch)));
-        });
+        if (IsBusy) { return; }
+        var batch = items.Where(IsStartable).ToArray();
+        if (batch.Length == 0) { return; }
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        activeCancellation = cancellation;
+        IsBusy = true;
+        LastError = null;
+        CurrentStage = "PreparingDownloadQueue";
+        CurrentWorkshopId = null;
+        ProgressCompleted = 0;
+        ProgressTotal = batch.Length;
+        foreach (var item in batch) { item.MarkReady(); }
+        logs.Add($"Starting download queue with {batch.Length} item(s).");
+        NotifyQueueStateChanged();
+        var progress = new Progress<OperationProgress>(value => ApplyProgress(value, batch));
         DownloadBatchResult? batchResult = null;
         string? batchFailure = null;
         var wasCancelled = false;
         try
         {
-            var settings = await settingsStore.LoadAsync(cancellation.Token).ConfigureAwait(false);
+            var settings = await settingsStore.LoadAsync(cancellation.Token);
             if (settings.RequiresInitialization || string.IsNullOrWhiteSpace(settings.Settings.LibraryRoot))
             {
                 batchFailure = "Choose a mod library folder before starting downloads.";
@@ -291,123 +164,93 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
                     WorkshopId = item.WorkshopId,
                     LibraryRoot = settings.Settings.LibraryRoot,
                 }).ToArray();
-                batchResult = await modOperationService.DownloadBatchAsync(
-                    requests,
-                    progress,
-                    cancellation.Token).ConfigureAwait(false);
+                batchResult = await modOperationService.DownloadBatchAsync(requests, progress, cancellation.Token);
             }
         }
-        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellation.Token))
         {
             wasCancelled = true;
         }
-        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellation.Token))
         {
             batchFailure = exception.Message;
         }
         finally
         {
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await InvokeOnUiAsync(() =>
+            // Apply progress already posted to the UI context before setting the final queue state.
+            await Task.Yield();
+            if (batchResult is not null)
             {
-                if (batchResult is not null)
-                {
-                    ApplyResults(batch, batchResult);
-                }
-                else if (wasCancelled || cancellation.IsCancellationRequested)
-                {
-                    const string error = "Download queue was cancelled.";
-                    foreach (var item in batch.Where(item => !item.IsTerminal))
-                    {
-                        item.Cancel(error);
-                    }
-
-                    logs.Add(error);
-                    CurrentStage = "Cancelled";
-                }
-                else
-                {
-                    var error = batchFailure ?? "The download queue failed.";
-                    foreach (var item in batch.Where(item => !item.IsTerminal))
-                    {
-                        item.Fail(error);
-                    }
-
-                    LastError = error;
-                    logs.Add(error);
-                    CurrentStage = "Failed";
-                }
-
-                ProgressCompleted = batch.Length;
-                ProgressTotal = batch.Length;
-                CurrentWorkshopId = null;
-                activeCancellation = null;
-                IsBusy = false;
-                RecalculateCounts();
-                NotifyQueueStateChanged();
-            }).ConfigureAwait(false);
-            if (!disposed && batchResult is not null && BatchCompleted is { } batchCompleted)
+                ApplyResults(batch, batchResult);
+            }
+            else if (wasCancelled || cancellation.IsCancellationRequested)
             {
-                foreach (var handler in batchCompleted.GetInvocationList().Cast<Func<Task>>())
-                {
-                    await InvokeOnUiAsync(handler).ConfigureAwait(false);
-                }
+                const string error = "Download queue was cancelled.";
+                foreach (var item in batch.Where(item => !item.IsTerminal)) { item.Cancel(error); }
+                logs.Add(error);
+                CurrentStage = "Cancelled";
+            }
+            else
+            {
+                var error = batchFailure ?? "The download queue failed.";
+                foreach (var item in batch.Where(item => !item.IsTerminal)) { item.Fail(error); }
+                LastError = error;
+                logs.Add(error);
+                CurrentStage = "Failed";
             }
 
-            cancellation.Dispose();
+            ProgressCompleted = batch.Length;
+            ProgressTotal = batch.Length;
+            CurrentWorkshopId = null;
+            activeCancellation = null;
+            IsBusy = false;
+            RecalculateCounts();
+            NotifyQueueStateChanged();
+        }
+
+        if (!disposed && batchResult is not null && BatchCompleted is { } batchCompleted)
+        {
+            foreach (var handler in batchCompleted.GetInvocationList().Cast<Func<Task>>()) { await handler(); }
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanCancel))]
     public void Cancel()
     {
         ThrowIfDisposed();
-        var cancellation = activeCancellation;
-        if (cancellation is null || cancellation.IsCancellationRequested)
-        {
-            return;
-        }
-
-        cancellation.Cancel();
-        _ = InvokeOnUiAsync(() =>
-        {
-            logs.Add("Cancellation requested.");
-            cancelCommand.NotifyCanExecuteChanged();
-        });
+        if (activeCancellation is not { IsCancellationRequested: false }) { return; }
+        activeCancellation.Cancel();
+        logs.Add("Cancellation requested.");
+        OnPropertyChanged(nameof(CanCancel));
+        CancelCommand.NotifyCanExecuteChanged();
     }
 
-    public async Task<int> RetryFailedAsync()
+    [RelayCommand(CanExecute = nameof(CanRetryFailed), AllowConcurrentExecutions = false)]
+    public Task<int> RetryFailedAsync()
     {
         ThrowIfDisposed();
-        return await InvokeOnUiAsync(() =>
-        {
-            if (IsBusy)
-            {
-                return 0;
-            }
-
-            var retryCount = 0;
-            foreach (var item in items.Where(item => item.Status == DownloadQueueItemStatus.Failed))
-            {
-                item.MarkReady();
-                retryCount++;
-            }
-
-            if (retryCount > 0)
-            {
-                logs.Add($"Returned {retryCount} failed item(s) to the download queue.");
-            }
-
-            RecalculateCounts();
-            NotifyQueueStateChanged();
-            return retryCount;
-        }).ConfigureAwait(false);
+        if (IsBusy) { return Task.FromResult(0); }
+        var failed = items.Where(item => item.Status == DownloadQueueItemStatus.Failed).ToArray();
+        foreach (var item in failed) { item.MarkReady(); }
+        if (failed.Length > 0) { logs.Add($"Returned {failed.Length} failed item(s) to the download queue."); }
+        RecalculateCounts();
+        NotifyQueueStateChanged();
+        return Task.FromResult(failed.Length);
     }
+
+    private bool CanRetryFailed() => !IsBusy && FailedCount > 0;
+
+    [RelayCommand(CanExecute = nameof(IsIdle))]
+    private void RemoveSelected(IList selectedItems) =>
+        Remove(selectedItems.OfType<DownloadQueueItemViewModel>().Select(item => item.WorkshopId));
+
+    [RelayCommand(CanExecute = nameof(IsIdle))]
+    private void ClearQueue() => Clear();
 
     public int Remove(IEnumerable<string> workshopIds)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(workshopIds);
-        VerifyUiThread();
         if (IsBusy)
         {
             return 0;
@@ -432,7 +275,6 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
     public bool Clear()
     {
         ThrowIfDisposed();
-        VerifyUiThread();
         if (IsBusy)
         {
             return false;
@@ -466,17 +308,13 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private async Task EnqueueInputTextAsync()
+    [RelayCommand(CanExecute = nameof(CanEnqueue), AllowConcurrentExecutions = false)]
+    private async Task Enqueue()
     {
-        await EnqueueAsync(InputText).ConfigureAwait(true);
+        await EnqueueAsync(InputText);
     }
 
     private bool CanEnqueue() => !IsBusy && !string.IsNullOrWhiteSpace(InputText);
-
-    private async Task RetryFailedCommandAsync()
-    {
-        await RetryFailedAsync().ConfigureAwait(true);
-    }
 
     private async Task ResolveMetadataAsync(
         IReadOnlyCollection<DownloadQueueItemViewModel> addedItems,
@@ -488,21 +326,18 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
         {
             metadata = await workshopClient.GetMetadataBatchAsync(
                 addedItems.Select(item => item.WorkshopId).ToArray(),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                cancellationToken: cancellationToken);
         }
         catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
-            await InvokeOnUiAsync(() =>
+            foreach (var item in addedItems)
             {
-                foreach (var item in addedItems)
-                {
-                    item.CompleteMetadataLookup(
-                        metadata: null,
-                        "Title lookup was cancelled; the item can still be downloaded.");
-                }
+                item.CompleteMetadataLookup(
+                    metadata: null,
+                    "Title lookup was cancelled; the item can still be downloaded.");
+            }
 
-                NotifyQueueStateChanged();
-            }).ConfigureAwait(false);
+            NotifyQueueStateChanged();
             throw;
         }
         catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
@@ -511,23 +346,20 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
             lookupError = $"Title lookup failed: {exception.Message}";
         }
 
-        await InvokeOnUiAsync(() =>
+        foreach (var item in addedItems)
         {
-            foreach (var item in addedItems)
-            {
-                metadata.TryGetValue(item.WorkshopId, out var itemMetadata);
-                item.CompleteMetadataLookup(
-                    itemMetadata,
-                    lookupError ?? (itemMetadata is null ? "Workshop title is unavailable." : null));
-            }
+            metadata.TryGetValue(item.WorkshopId, out var itemMetadata);
+            item.CompleteMetadataLookup(
+                itemMetadata,
+                lookupError ?? (itemMetadata is null ? "Workshop title is unavailable." : null));
+        }
 
-            if (lookupError is not null)
-            {
-                logs.Add(lookupError);
-            }
+        if (lookupError is not null)
+        {
+            logs.Add(lookupError);
+        }
 
-            NotifyQueueStateChanged();
-        }).ConfigureAwait(false);
+        NotifyQueueStateChanged();
     }
 
     private void ApplyProgress(
@@ -603,88 +435,10 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
     private void NotifyQueueStateChanged()
     {
         OnPropertyChanged(nameof(CanStart));
-        enqueueCommand.NotifyCanExecuteChanged();
-        startCommand.NotifyCanExecuteChanged();
-        cancelCommand.NotifyCanExecuteChanged();
-        retryFailedCommand.NotifyCanExecuteChanged();
-    }
-
-    private void NotifyCommandStates()
-    {
-        enqueueCommand.NotifyCanExecuteChanged();
-        startCommand.NotifyCanExecuteChanged();
-        cancelCommand.NotifyCanExecuteChanged();
-        retryFailedCommand.NotifyCanExecuteChanged();
-    }
-
-    private Task<bool> InvokeOnUiAsync(Action action) =>
-        InvokeOnUiAsync(() =>
-        {
-            action();
-            return true;
-        });
-
-    private Task InvokeOnUiAsync(Func<Task> action)
-    {
-        if (Environment.CurrentManagedThreadId == uiThreadId)
-        {
-            return action();
-        }
-
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        uiContext.Post(
-            async _ =>
-            {
-                try
-                {
-                    await action().ConfigureAwait(false);
-                    completion.SetResult();
-                }
-                catch (Exception exception)
-                {
-                    completion.SetException(exception);
-                }
-            },
-            state: null);
-        return completion.Task;
-    }
-
-    private Task<T> InvokeOnUiAsync<T>(Func<T> action)
-    {
-        if (Environment.CurrentManagedThreadId == uiThreadId)
-        {
-            return Task.FromResult(action());
-        }
-
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        uiContext.Post(
-            _ =>
-            {
-                try
-                {
-                    completion.SetResult(action());
-                }
-                catch (Exception exception)
-                {
-                    completion.SetException(exception);
-                }
-            },
-            state: null);
-        return completion.Task;
-    }
-
-    private static async Task DrainProgressAsync(ConcurrentQueue<Task> pendingProgress)
-    {
-        while (!pendingProgress.IsEmpty)
-        {
-            var updates = new List<Task>();
-            while (pendingProgress.TryDequeue(out var update))
-            {
-                updates.Add(update);
-            }
-
-            await Task.WhenAll(updates).ConfigureAwait(false);
-        }
+        EnqueueCommand.NotifyCanExecuteChanged();
+        StartCommand.NotifyCanExecuteChanged();
+        CancelCommand.NotifyCanExecuteChanged();
+        RetryFailedCommand.NotifyCanExecuteChanged();
     }
 
     private static bool IsStartable(DownloadQueueItemViewModel item) =>
@@ -697,23 +451,4 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
     }
 
-    private void VerifyUiThread()
-    {
-        if (Environment.CurrentManagedThreadId != uiThreadId)
-        {
-            throw new InvalidOperationException("Queue collections can only be changed from the UI thread.");
-        }
-    }
-
-    private sealed class CallbackProgress<T> : IProgress<T>
-    {
-        private readonly Action<T> report;
-
-        public CallbackProgress(Action<T> report)
-        {
-            this.report = report;
-        }
-
-        public void Report(T value) => report(value);
-    }
 }

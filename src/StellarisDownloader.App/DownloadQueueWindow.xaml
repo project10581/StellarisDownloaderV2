@@ -33,11 +33,12 @@
                     Padding="12,6"
                     Margin="0,0,8,0" />
             <Button Content="{DynamicResource Download.RemoveSelected}"
-                    Click="RemoveSelected_Click"
+                    Command="{Binding RemoveSelectedCommand}"
+                    CommandParameter="{Binding SelectedItems, ElementName=QueueList}"
                     Padding="12,6"
                     Margin="0,0,8,0" />
             <Button Content="{DynamicResource Download.Clear}"
-                    Click="ClearQueue_Click"
+                    Command="{Binding ClearQueueCommand}"
                     Padding="12,6" />
         </StackPanel>
 
