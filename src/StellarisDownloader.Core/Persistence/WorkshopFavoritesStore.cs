@@ -123,7 +123,7 @@ public sealed class WorkshopFavoritesStore(string path, Action<string>? logWarni
             foreach (var item in document.Favorites)
             {
                 if (item is null) { throw new InvalidDataException("The favorites file contains an invalid item."); }
-                if (string.IsNullOrEmpty(item.WorkshopId) || item.WorkshopId.Length > 20 || !item.WorkshopId.All(char.IsAsciiDigit))
+                if (!WorkshopId.IsValid(item.WorkshopId) || item.WorkshopId.Length > 20)
                 {
                     logWarning?.Invoke($"Skipped a favorite with an invalid Workshop ID: {item.WorkshopId}");
                     continue;
@@ -144,7 +144,7 @@ public sealed class WorkshopFavoritesStore(string path, Action<string>? logWarni
 
     private static void ValidateId(string id)
     {
-        if (string.IsNullOrEmpty(id) || id.Length > 20 || !id.All(char.IsAsciiDigit))
+        if (!WorkshopId.IsValid(id) || id.Length > 20)
         {
             throw new ArgumentException("A favorite must have a numeric Workshop ID.", nameof(id));
         }

@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Text.Unicode;
 using StellarisDownloader.Core.Models;
 
+using StellarisDownloader.Core.Services;
+
 namespace StellarisDownloader.Core.Persistence;
 
 public static class ModSnapshotFile
@@ -104,7 +106,7 @@ public static class ModSnapshotFile
 
     private static void ValidateId(string id, HashSet<string> identifiers)
     {
-        if (string.IsNullOrEmpty(id) || id.Length > 255 || !id.All(char.IsAsciiDigit) || !identifiers.Add(id))
+        if (!WorkshopId.IsValid(id) || id.Length > 255 || !identifiers.Add(id))
         {
             throw new InvalidDataException("The mod snapshot contains an invalid or duplicate Workshop ID.");
         }

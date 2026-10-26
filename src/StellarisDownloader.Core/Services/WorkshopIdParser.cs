@@ -55,7 +55,7 @@ public static class WorkshopIdParser
         }
 
         var candidate = input.Trim();
-        if (IsAsciiDigits(candidate))
+        if (WorkshopId.IsValid(candidate))
         {
             workshopId = candidate;
             return true;
@@ -78,7 +78,7 @@ public static class WorkshopIdParser
             .Where(pair => string.Equals(pair.Key, "id", StringComparison.OrdinalIgnoreCase))
             .Select(pair => pair.Value)
             .ToArray();
-        if (idValues.Length != 1 || !IsAsciiDigits(idValues[0]))
+        if (idValues.Length != 1 || !WorkshopId.IsValid(idValues[0]))
         {
             error = "The Steam Community URL must contain one numeric id query parameter.";
             return false;
@@ -116,6 +116,4 @@ public static class WorkshopIdParser
         }
     }
 
-    private static bool IsAsciiDigits(string value) =>
-        value.Length > 0 && value.All(char.IsAsciiDigit);
 }

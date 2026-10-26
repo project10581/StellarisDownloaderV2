@@ -37,7 +37,7 @@ public sealed class LibraryService : ILibraryService
         this.workshopClient = workshopClient;
         this.junctionManager = junctionManager;
         this.writeCoordinator = writeCoordinator;
-        this.junctionPath = NormalizePath(junctionPath);
+        this.junctionPath = PathUtil.Normalize(junctionPath);
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -500,10 +500,7 @@ public sealed class LibraryService : ILibraryService
             || exception is InvalidDataException or System.Text.Json.JsonException;
 
     private static string? NormalizeOptionalPath(string? path) =>
-        string.IsNullOrWhiteSpace(path) ? null : NormalizePath(path);
-
-    private static string NormalizePath(string path) =>
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        string.IsNullOrWhiteSpace(path) ? null : PathUtil.Normalize(path);
 
     private static bool PathsOverlap(string left, string right) =>
         IsSameOrAncestor(left, right) || IsSameOrAncestor(right, left);

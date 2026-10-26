@@ -13,7 +13,7 @@ public static class SteamCmdOutputClassifier
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workshopId);
         ArgumentNullException.ThrowIfNull(output);
-        if (!workshopId.All(char.IsAsciiDigit))
+        if (!WorkshopId.IsValid(workshopId))
         {
             throw new ArgumentException("Workshop ID must contain only ASCII digits.", nameof(workshopId));
         }

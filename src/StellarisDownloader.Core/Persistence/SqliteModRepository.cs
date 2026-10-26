@@ -178,7 +178,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        var normalizedRoot = NormalizeLibraryRoot(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
 
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         if (!await IsUsableForRootAsync(connection, normalizedRoot, cancellationToken).ConfigureAwait(false))
@@ -205,7 +205,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        var normalizedRoot = NormalizeLibraryRoot(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         ValidateWorkshopId(workshopId);
 
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -231,7 +231,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
     {
         EnsureInitialized();
         ArgumentNullException.ThrowIfNull(record);
-        var normalizedRoot = NormalizeLibraryRoot(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         ValidateRecord(record);
 
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -245,7 +245,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        var normalizedRoot = NormalizeLibraryRoot(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         ValidateWorkshopId(workshopId);
 
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -264,7 +264,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
     {
         EnsureInitialized();
         ArgumentNullException.ThrowIfNull(records);
-        var normalizedRoot = NormalizeLibraryRoot(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
 
         try
         {
@@ -288,14 +288,14 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         EnsureInitialized();
         var normalizedExpectedRoot = expectedLibraryRoot is null
             ? null
-            : NormalizeLibraryRoot(expectedLibraryRoot);
+            : PathUtil.Normalize(expectedLibraryRoot);
 
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         var stored = await ReadStoredCacheStateAsync(connection, cancellationToken).ConfigureAwait(false);
         var state = stored.IsStale ? CacheState.Stale : CacheState.Valid;
 
         if (normalizedExpectedRoot is not null
-            && !LibraryRootsEqual(normalizedExpectedRoot, stored.LibraryRoot))
+            && !PathUtil.Equal(normalizedExpectedRoot, stored.LibraryRoot))
         {
             state = CacheState.RootMismatch;
         }
@@ -336,7 +336,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             connection,
             transaction,
             cancellationToken).ConfigureAwait(false);
-        var isSameLibraryRoot = LibraryRootsEqual(normalizedRoot, storedCacheState.LibraryRoot);
+        var isSameLibraryRoot = PathUtil.Equal(normalizedRoot, storedCacheState.LibraryRoot);
         var existingRecords = await ReadAllModsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
         await using (var deleteCommand = connection.CreateCommand())
         {
@@ -562,7 +562,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
         CancellationToken cancellationToken)
     {
         var state = await ReadStoredCacheStateAsync(connection, cancellationToken).ConfigureAwait(false);
-        return !state.IsStale && LibraryRootsEqual(normalizedRoot, state.LibraryRoot);
+        return !state.IsStale && PathUtil.Equal(normalizedRoot, state.LibraryRoot);
     }
 
     private static async Task EnsureUsableForRootAsync(
@@ -650,17 +650,6 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
             : merged;
     }
 
-    private static string NormalizeLibraryRoot(string libraryRoot)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(libraryRoot);
-        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(libraryRoot));
-    }
-
-    private static bool LibraryRootsEqual(string expected, string? actual)
-    {
-        return actual is not null
-            && string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
-    }
 
     private static void ValidateRecord(ModRecord record)
     {
@@ -681,7 +670,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
     private static void ValidateWorkshopId(string workshopId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workshopId);
-        if (!workshopId.All(char.IsAsciiDigit))
+        if (!WorkshopId.IsValid(workshopId))
         {
             throw new ArgumentException("Workshop ID must contain only ASCII digits.", nameof(workshopId));
         }

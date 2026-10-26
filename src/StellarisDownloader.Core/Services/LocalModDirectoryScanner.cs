@@ -11,7 +11,7 @@ public static class LocalModDirectoryScanner
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(libraryRoot);
         cancellationToken.ThrowIfCancellationRequested();
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(libraryRoot));
+        var root = PathUtil.Normalize(libraryRoot);
         // Enumerating a missing or inaccessible root must fail, never produce an empty snapshot.
         var directories = new DirectoryInfo(root).EnumerateDirectories()
             .OrderBy(directory => directory.Name, StringComparer.Ordinal).ToArray();
@@ -23,7 +23,7 @@ public static class LocalModDirectoryScanner
         {
             cancellationToken.ThrowIfCancellationRequested();
             var directory = directories[index];
-            if (!directory.Name.All(char.IsAsciiDigit))
+            if (!WorkshopId.IsValid(directory.Name))
             {
                 ignoredCount++;
             }

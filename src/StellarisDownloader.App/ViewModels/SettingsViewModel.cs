@@ -273,10 +273,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        return string.Equals(Path.TrimEndingDirectorySeparator(normalizedLeft),
-            Path.TrimEndingDirectorySeparator(normalizedRight), StringComparison.OrdinalIgnoreCase);
+        return PathUtil.Equal(normalizedLeft, normalizedRight);
     }
 
-    private static string NormalizePath(string path) =>
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 }

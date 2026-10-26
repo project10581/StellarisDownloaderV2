@@ -6,15 +6,15 @@ public static class ModDeletePathResolver
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(libraryRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(workshopId);
-        if (!workshopId.All(char.IsAsciiDigit))
+        if (!WorkshopId.IsValid(workshopId))
         {
             throw new ArgumentException(
                 "Workshop ID must contain only ASCII digits.",
                 nameof(workshopId));
         }
 
-        var normalizedRoot = NormalizePath(libraryRoot);
-        var target = NormalizePath(Path.Combine(normalizedRoot, workshopId));
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
+        var target = PathUtil.Normalize(Path.Combine(normalizedRoot, workshopId));
         var parent = Path.GetDirectoryName(target);
         if (!string.Equals(parent, normalizedRoot, StringComparison.OrdinalIgnoreCase))
         {
@@ -64,6 +64,4 @@ public static class ModDeletePathResolver
         }
     }
 
-    private static string NormalizePath(string path) =>
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 }

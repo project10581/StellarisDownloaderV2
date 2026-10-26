@@ -61,22 +61,21 @@ public sealed class InstalledWorkshopStateProvider : IInstalledWorkshopStateProv
 
     private static bool IsInstalledDirectChild(ModRecord record, string libraryRoot)
     {
-        if (string.IsNullOrEmpty(record.WorkshopId)
-            || !record.WorkshopId.All(char.IsAsciiDigit))
+        if (!WorkshopId.IsValid(record.WorkshopId))
         {
             return false;
         }
 
         try
         {
-            var expectedPath = NormalizePath(Path.Combine(libraryRoot, record.WorkshopId));
+            var expectedPath = PathUtil.Normalize(Path.Combine(libraryRoot, record.WorkshopId));
             if (!TryNormalizePath(record.ContentPath, out var contentPath))
             {
                 return false;
             }
             var parentPath = Path.GetDirectoryName(expectedPath);
-            if (!PathsEqual(contentPath, expectedPath)
-                || !PathsEqual(parentPath, libraryRoot))
+            if (!PathUtil.Equal(contentPath, expectedPath)
+                || !PathUtil.Equal(parentPath, libraryRoot))
             {
                 return false;
             }
@@ -106,11 +105,4 @@ public sealed class InstalledWorkshopStateProvider : IInstalledWorkshopStateProv
         return true;
     }
 
-    private static string NormalizePath(string path) =>
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-
-    private static bool PathsEqual(string? left, string? right) =>
-        left is not null
-        && right is not null
-        && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 }

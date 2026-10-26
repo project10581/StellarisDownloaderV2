@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="StellarisDownloader.Tests" />
+    <InternalsVisibleTo Include="StellarisDownloader.App" />
   </ItemGroup>
 
 </Project>

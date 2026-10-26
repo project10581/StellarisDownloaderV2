@@ -11,7 +11,7 @@ public sealed class WindowsJunctionManager : IJunctionManager
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var normalizedPath = NormalizePath(junctionPath);
+        var normalizedPath = PathUtil.Normalize(junctionPath);
         return Task.FromResult(Inspect(normalizedPath));
     }
 
@@ -25,8 +25,8 @@ public sealed class WindowsJunctionManager : IJunctionManager
             throw new PlatformNotSupportedException("Directory junctions are supported only on Windows.");
         }
 
-        var normalizedJunctionPath = NormalizePath(junctionPath);
-        var normalizedTargetPath = NormalizePath(targetPath);
+        var normalizedJunctionPath = PathUtil.Normalize(junctionPath);
+        var normalizedTargetPath = PathUtil.Normalize(targetPath);
         if (!Directory.Exists(normalizedTargetPath))
         {
             throw new DirectoryNotFoundException(
@@ -35,7 +35,7 @@ public sealed class WindowsJunctionManager : IJunctionManager
 
         var previousState = Inspect(normalizedJunctionPath);
         if (previousState.Kind == JunctionStateKind.Junction
-            && PathsEqual(previousState.TargetPath, normalizedTargetPath))
+            && PathUtil.Equal(previousState.TargetPath, normalizedTargetPath))
         {
             return new JunctionUpdate(previousState, normalizedTargetPath, Changed: false);
         }
@@ -122,7 +122,7 @@ public sealed class WindowsJunctionManager : IJunctionManager
                 targetPath = new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
                 if (targetPath is not null)
                 {
-                    targetPath = NormalizePath(targetPath);
+                    targetPath = PathUtil.Normalize(targetPath);
                 }
             }
             catch (IOException)
@@ -248,7 +248,7 @@ public sealed class WindowsJunctionManager : IJunctionManager
     {
         var state = Inspect(junctionPath);
         if (state.Kind != JunctionStateKind.Junction
-            || !PathsEqual(state.TargetPath, expectedTargetPath))
+            || !PathUtil.Equal(state.TargetPath, expectedTargetPath))
         {
             throw new IOException(
                 $"Junction verification failed: {junctionPath} -> {state.TargetPath ?? "<unresolved>"}");
@@ -274,17 +274,4 @@ public sealed class WindowsJunctionManager : IJunctionManager
         }
     }
 
-    private static string NormalizePath(string path)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-    }
-
-    private static bool PathsEqual(string? left, string? right) =>
-        left is not null
-        && right is not null
-        && string.Equals(
-            NormalizePath(left),
-            NormalizePath(right),
-            StringComparison.OrdinalIgnoreCase);
 }

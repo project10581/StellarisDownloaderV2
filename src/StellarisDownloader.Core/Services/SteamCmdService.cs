@@ -33,7 +33,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
 
         this.httpClient = httpClient;
         this.processRunner = processRunner;
-        this.steamCmdDirectory = NormalizePath(steamCmdDirectory);
+        this.steamCmdDirectory = PathUtil.Normalize(steamCmdDirectory);
         executablePath = Path.Combine(this.steamCmdDirectory, "steamcmd.exe");
         this.downloadUri = downloadUri ?? DefaultDownloadUri;
     }
@@ -161,8 +161,8 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
         {
             var request = requests[index];
             ArgumentNullException.ThrowIfNull(request);
-            var root = NormalizePath(request.LibraryRoot);
-            if (!IsValidWorkshopId(request.WorkshopId))
+            var root = PathUtil.Normalize(request.LibraryRoot);
+            if (!WorkshopId.IsValid(request.WorkshopId))
             {
                 results[index] = FailedDownload(request.WorkshopId, root, "Workshop ID must contain only ASCII digits.");
                 report(index, results[index]);
@@ -262,7 +262,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
                 {
                     WorkshopId = request.WorkshopId,
                     Status = status,
-                    ContentPath = Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId),
+                    ContentPath = Path.Combine(PathUtil.Normalize(request.LibraryRoot), request.WorkshopId),
                     Error = error,
                 };
                 report(index, results[index]);
@@ -275,7 +275,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
         SteamCmdTerminalState terminalState,
         IReadOnlyList<string> outputLines)
     {
-        var contentPath = Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId);
+        var contentPath = Path.Combine(PathUtil.Normalize(request.LibraryRoot), request.WorkshopId);
         var folderExists = Directory.Exists(contentPath);
         var folderNonEmpty = folderExists && Directory.EnumerateFileSystemEntries(contentPath).Any();
         var succeeded = terminalState == SteamCmdTerminalState.Succeeded && folderNonEmpty;
@@ -451,7 +451,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
             return;
         }
 
-        var normalizedPath = NormalizePath(path);
+        var normalizedPath = PathUtil.Normalize(path);
         var parent = Path.GetDirectoryName(normalizedPath);
         if (!string.Equals(parent, steamCmdDirectory, StringComparison.OrdinalIgnoreCase)
             || !Path.GetFileName(normalizedPath).StartsWith(".install-", StringComparison.Ordinal))
@@ -480,7 +480,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
             return;
         }
 
-        var normalizedPath = NormalizePath(path);
+        var normalizedPath = PathUtil.Normalize(path);
         var parent = Path.GetDirectoryName(normalizedPath);
         var fileName = Path.GetFileName(normalizedPath);
         if (!string.Equals(parent, steamCmdDirectory, StringComparison.OrdinalIgnoreCase)
@@ -548,9 +548,4 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
         };
     }
 
-    private static bool IsValidWorkshopId(string workshopId) =>
-        !string.IsNullOrWhiteSpace(workshopId) && workshopId.All(char.IsAsciiDigit);
-
-    private static string NormalizePath(string path) =>
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 }

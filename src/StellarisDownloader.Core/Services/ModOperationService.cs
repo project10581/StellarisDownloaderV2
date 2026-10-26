@@ -37,7 +37,7 @@ public sealed class ModOperationService : IModOperationService
         this.junctionManager = junctionManager;
         this.fileDeletionService = fileDeletionService;
         this.writeCoordinator = writeCoordinator;
-        this.junctionPath = NormalizePath(junctionPath);
+        this.junctionPath = PathUtil.Normalize(junctionPath);
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -67,7 +67,7 @@ public sealed class ModOperationService : IModOperationService
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var normalizedRoot = NormalizePath(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         var cacheState = await modRepository.GetCacheStateAsync(
             normalizedRoot,
             cancellationToken).ConfigureAwait(false);
@@ -106,9 +106,9 @@ public sealed class ModOperationService : IModOperationService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workshopIds);
-        var normalizedRoot = NormalizePath(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         var requests = workshopIds
-            .Where(IsValidWorkshopId)
+            .Where(WorkshopId.IsValid)
             .Distinct(StringComparer.Ordinal)
             .Select(workshopId => new DownloadRequest
             {
@@ -126,7 +126,7 @@ public sealed class ModOperationService : IModOperationService
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var normalizedRoot = NormalizePath(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         try
         {
             return await writeCoordinator.ExecuteAsync(
@@ -157,7 +157,7 @@ public sealed class ModOperationService : IModOperationService
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var normalizedRoot = NormalizePath(libraryRoot);
+        var normalizedRoot = PathUtil.Normalize(libraryRoot);
         try
         {
             return await writeCoordinator.ExecuteAsync(
@@ -525,7 +525,7 @@ public sealed class ModOperationService : IModOperationService
                 continue;
             }
 
-            normalized.Add(request with { LibraryRoot = NormalizePath(request.LibraryRoot) });
+            normalized.Add(request with { LibraryRoot = PathUtil.Normalize(request.LibraryRoot) });
         }
 
         return normalized;
@@ -546,7 +546,6 @@ public sealed class ModOperationService : IModOperationService
             }).ToArray(),
         };
     }
-
 
     private static DownloadResult CancelledBeforeStart(DownloadRequest request)
     {
@@ -574,21 +573,13 @@ public sealed class ModOperationService : IModOperationService
     }
 
     private static string SafeContentPath(string libraryRoot, string workshopId) =>
-        IsValidWorkshopId(workshopId)
+        WorkshopId.IsValid(workshopId)
             ? Path.Combine(libraryRoot, workshopId)
             : libraryRoot;
 
     private static string BuildContentPath(DownloadRequest request) =>
-        IsValidWorkshopId(request.WorkshopId)
-            ? Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId)
-            : NormalizePath(request.LibraryRoot);
+        WorkshopId.IsValid(request.WorkshopId)
+            ? Path.Combine(PathUtil.Normalize(request.LibraryRoot), request.WorkshopId)
+            : PathUtil.Normalize(request.LibraryRoot);
 
-    private static bool IsValidWorkshopId(string workshopId) =>
-        !string.IsNullOrWhiteSpace(workshopId) && workshopId.All(char.IsAsciiDigit);
-
-    private static string NormalizePath(string path)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-    }
 }

@@ -51,7 +51,7 @@ public sealed class WorkshopClient : IWorkshopClient, IDisposable
         ArgumentNullException.ThrowIfNull(workshopIds);
         ObjectDisposedException.ThrowIf(disposed, this);
         var normalizedIds = workshopIds
-            .Where(IsValidWorkshopId)
+            .Where(WorkshopId.IsValid)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         if (normalizedIds.Length == 0)
@@ -340,7 +340,7 @@ public sealed class WorkshopClient : IWorkshopClient, IDisposable
         }
 
         var workshopId = GetString(detail, "publishedfileid");
-        if (workshopId is null || !IsValidWorkshopId(workshopId))
+        if (workshopId is null || !WorkshopId.IsValid(workshopId))
         {
             return null;
         }
@@ -395,9 +395,6 @@ public sealed class WorkshopClient : IWorkshopClient, IDisposable
         var seconds = GetInt64(element, propertyName);
         return seconds is null ? null : DateTimeOffset.FromUnixTimeSeconds(seconds.Value);
     }
-
-    private static bool IsValidWorkshopId(string? workshopId) =>
-        !string.IsNullOrWhiteSpace(workshopId) && workshopId.All(char.IsAsciiDigit);
 
     private static bool IsValidCreatorId(string? creatorId) =>
         !string.IsNullOrWhiteSpace(creatorId) && creatorId.All(char.IsAsciiDigit);

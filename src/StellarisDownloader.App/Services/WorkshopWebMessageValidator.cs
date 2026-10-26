@@ -1,6 +1,8 @@
 using System.Text.Json;
 using StellarisDownloader.App.Models;
 
+using StellarisDownloader.Core.Services;
+
 namespace StellarisDownloader.App.Services;
 
 public static class WorkshopWebMessageValidator
@@ -140,7 +142,7 @@ public static class WorkshopWebMessageValidator
             }
 
             var workshopId = item.GetString();
-            if (string.IsNullOrEmpty(workshopId) || workshopId.Length > 20 || !workshopId.All(IsAsciiDigit))
+            if (!WorkshopId.IsValid(workshopId) || workshopId.Length > 20)
             {
                 return WebBridgeMessageValidationResult.Rejected(
                     WebBridgeMessageError.InvalidWorkshopId);
@@ -155,5 +157,4 @@ public static class WorkshopWebMessageValidator
         return WebBridgeMessageValidationResult.Accepted(workshopIds, messageType, title);
     }
 
-    private static bool IsAsciiDigit(char character) => character is >= '0' and <= '9';
 }
