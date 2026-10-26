@@ -357,6 +357,164 @@ public sealed class SteamCmdServiceTests
         Assert.Equal(0, fixture.Runner.CallCount);
     }
 
+    [Theory]
+    [InlineData(3, 1)]
+    [InlineData(60, 3)]
+    public async Task BatchUsesOrderedSequentialChunks(int count, int expectedProcesses)
+    {
+        using var fixture = await SteamCmdServiceFixture.CreateAsync((_, arguments) => new ProcessRunResult
+        {
+            ExitCode = 0,
+            Output = RequestedIds(arguments).Select((id, index) =>
+                new ProcessOutputLine(index, "stdout", $"Success. Downloaded item {id}.")).ToArray(),
+        });
+        var ids = Enumerable.Range(100, count).Select(id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+        foreach (var id in ids) { await fixture.CreateModFolderAsync(id, nonEmpty: true); }
+
+        var results = await fixture.Service.DownloadBatchAsync(ids.Select(fixture.Request).ToArray());
+
+        Assert.Equal(expectedProcesses, fixture.Runner.CallCount);
+        Assert.Equal(ids, fixture.Runner.Calls.SelectMany(RequestedIds));
+        Assert.Equal(ids.Chunk(25).Select(chunk => chunk.Length), fixture.Runner.Calls.Select(call => RequestedIds(call).Length));
+        Assert.All(results, result => Assert.Equal(OperationStatus.Succeeded, result.Status));
+        Assert.All(fixture.Runner.Calls, arguments =>
+        {
+            Assert.Equal(["+login", "anonymous"], arguments.Take(2));
+            Assert.Equal("+quit", arguments[^1]);
+            for (var index = 2; index < arguments.Count - 1; index += 3)
+            {
+                Assert.Equal("+workshop_download_item", arguments[index]);
+                Assert.Equal("281990", arguments[index + 1]);
+            }
+        });
+        Assert.True(fixture.Runner.LastIdleTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(10), fixture.Runner.LastTimeout);
+    }
+
+    [Fact]
+    public async Task MixedBatchReportsTerminalLinesImmediatelyAndRetriesOnlyUnknown()
+    {
+        using var fixture = await SteamCmdServiceFixture.CreateAsync((_, arguments) => new ProcessRunResult
+        {
+            Output = RequestedIds(arguments).Length == 3
+                ? [new(1, "stdout", "Success. Downloaded item 100."), new(2, "stderr", "Download item 200 failed.")]
+                : [new(1, "stdout", "Success. Downloaded item 300.")],
+        });
+        await fixture.CreateModFolderAsync("100", nonEmpty: true);
+        await fixture.CreateModFolderAsync("300", nonEmpty: true);
+        var progress = new ItemProgress();
+        var received = 0;
+        fixture.Runner.AfterOutput = _ => Assert.Equal(++received, progress.Results.Count);
+
+        var results = await fixture.Service.DownloadBatchAsync(
+            [fixture.Request("100"), fixture.Request("200"), fixture.Request("300")], progress);
+
+        Assert.Equal([OperationStatus.Succeeded, OperationStatus.Failed, OperationStatus.Succeeded], results.Select(result => result.Status));
+        Assert.Equal(2, fixture.Runner.CallCount);
+        Assert.Equal(["300"], RequestedIds(fixture.Runner.Calls[1]));
+        Assert.Equal(["100", "200", "300"], progress.Results.Select(result => result.WorkshopId));
+    }
+
+    [Fact]
+    public async Task UnknownRetriesOnceBeforeNextChunkAndKeepsExistingErrorIfStillUnknown()
+    {
+        using var fixture = await SteamCmdServiceFixture.CreateAsync((_, arguments) => new ProcessRunResult
+        {
+            Output = RequestedIds(arguments).Where(id => id != "100").Select((id, index) =>
+                new ProcessOutputLine(index, "stderr", $"Download item {id} failed.")).ToArray(),
+        });
+        var requests = Enumerable.Range(100, 26).Select(id => fixture.Request(id.ToString(System.Globalization.CultureInfo.InvariantCulture))).ToArray();
+
+        var results = await fixture.Service.DownloadBatchAsync(requests);
+
+        Assert.Equal([25, 1, 1], fixture.Runner.Calls.Select(call => RequestedIds(call).Length));
+        Assert.Equal(["100"], RequestedIds(fixture.Runner.Calls[1]));
+        Assert.Equal(["125"], RequestedIds(fixture.Runner.Calls[2]));
+        Assert.Equal(OperationStatus.Failed, results[0].Status);
+        Assert.Equal("SteamCMD output did not contain a recognized terminal result for this Workshop ID.", results[0].Error);
+    }
+
+    [Fact]
+    public async Task BatchSuccessWithEmptyDirectoryFailsImmediatelyWithoutRetry()
+    {
+        using var fixture = await SteamCmdServiceFixture.CreateAsync(new ProcessRunResult
+        {
+            Output = [new(1, "stdout", "Success. Downloaded item 100.")],
+        });
+        await fixture.CreateModFolderAsync("100", nonEmpty: false);
+        var progress = new ItemProgress();
+
+        var result = Assert.Single(await fixture.Service.DownloadBatchAsync([fixture.Request("100")], progress));
+
+        Assert.Equal(OperationStatus.Failed, result.Status);
+        Assert.Equal("SteamCMD reported success, but the Workshop directory is empty.", result.Error);
+        Assert.Equal(OperationStatus.Failed, Assert.Single(progress.Results).Status);
+        Assert.Equal(1, fixture.Runner.CallCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InterruptedBatchPreservesTerminalResultsAndDoesNotRetryRemainder(bool timedOut)
+    {
+        using var fixture = await SteamCmdServiceFixture.CreateAsync(new ProcessRunResult
+        {
+            Cancelled = !timedOut,
+            TimedOut = timedOut,
+            Output = [new(1, "stdout", "Success. Downloaded item 100."), new(2, "stderr", "Download item 200 failed.")],
+        });
+        await fixture.CreateModFolderAsync("100", nonEmpty: true);
+        var progress = new ItemProgress();
+
+        var results = await fixture.Service.DownloadBatchAsync(
+            [fixture.Request("100"), fixture.Request("200"), fixture.Request("300")], progress);
+
+        Assert.Equal(OperationStatus.Succeeded, results[0].Status);
+        Assert.Equal(OperationStatus.Failed, results[1].Status);
+        Assert.False(results[0].TimedOut);
+        Assert.False(results[1].TimedOut);
+        Assert.Equal(timedOut ? OperationStatus.Failed : OperationStatus.Cancelled, results[2].Status);
+        Assert.Equal(timedOut, results[2].TimedOut);
+        Assert.Equal(1, fixture.Runner.CallCount);
+        Assert.Equal(3, progress.Results.Count);
+    }
+
+    [Fact]
+    public async Task CancellationDuringOutputKeepsCompletedItemAndDoesNotStartNextChunk()
+    {
+        using var fixture = await SteamCmdServiceFixture.CreateAsync(new ProcessRunResult
+        {
+            Output = [new(1, "stdout", "Success. Downloaded item 100.")],
+        });
+        using var cancellation = new CancellationTokenSource();
+        await fixture.CreateModFolderAsync("100", nonEmpty: true);
+        fixture.Runner.AfterOutput = _ =>
+        {
+            cancellation.Cancel();
+            cancellation.Token.ThrowIfCancellationRequested();
+        };
+        var requests = Enumerable.Range(100, 26).Select(id => fixture.Request(id.ToString(System.Globalization.CultureInfo.InvariantCulture))).ToArray();
+
+        var results = await fixture.Service.DownloadBatchAsync(requests, cancellationToken: cancellation.Token);
+
+        Assert.Equal(OperationStatus.Succeeded, results[0].Status);
+        Assert.All(results.Skip(1), result => Assert.Equal(OperationStatus.Cancelled, result.Status));
+        Assert.Equal(1, fixture.Runner.CallCount);
+    }
+
+    private static string[] RequestedIds(IReadOnlyList<string> arguments) =>
+        Enumerable.Range(0, arguments.Count).Where(index => arguments[index] == "+workshop_download_item")
+            .Select(index => arguments[index + 2]).ToArray();
+
+    private sealed class ItemProgress : IProgress<OperationProgress>
+    {
+        public List<DownloadResult> Results { get; } = [];
+        public void Report(OperationProgress value)
+        {
+            if (value.ItemResult is { } result) { Results.Add(result); }
+        }
+    }
+
     private static byte[] CreateSteamCmdArchive()
     {
         using var stream = new MemoryStream();
@@ -402,7 +560,11 @@ public sealed class SteamCmdServiceTests
 
         public string LibraryRoot { get; }
 
-        public static async Task<SteamCmdServiceFixture> CreateAsync(ProcessRunResult processResult)
+        public static Task<SteamCmdServiceFixture> CreateAsync(ProcessRunResult processResult) =>
+            CreateAsync((_, _) => processResult);
+
+        public static async Task<SteamCmdServiceFixture> CreateAsync(
+            Func<string, IReadOnlyList<string>, ProcessRunResult> resultFactory)
         {
             var temporaryDirectory = new TemporaryDirectory();
             var steamCmdDirectory = temporaryDirectory.GetPath("steamcmd");
@@ -411,7 +573,7 @@ public sealed class SteamCmdServiceTests
             var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
                 StubHttpMessageHandler.Response(HttpStatusCode.InternalServerError)));
             var httpClient = new HttpClient(handler);
-            var runner = new StubProcessRunner(processResult);
+            var runner = new StubProcessRunner(resultFactory);
             var service = new SteamCmdService(httpClient, runner, steamCmdDirectory);
             var libraryRoot = temporaryDirectory.GetPath("library");
             Directory.CreateDirectory(libraryRoot);

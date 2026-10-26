@@ -43,18 +43,38 @@ internal sealed class StubProcessRunner : IProcessRunner
 
     public IReadOnlyList<string>? LastArguments { get; private set; }
 
+    public List<IReadOnlyList<string>> Calls { get; } = [];
+
+    public Action<ProcessOutputLine>? AfterOutput { get; set; }
+
+    public TimeSpan LastTimeout { get; private set; }
+
+    public bool LastIdleTimeout { get; private set; }
+
     public Task<ProcessRunResult> RunAsync(
         string executablePath,
         IReadOnlyList<string> arguments,
         string workingDirectory,
         TimeSpan timeout,
         IProgress<OperationProgress>? progress = null,
+        Action<ProcessOutputLine>? outputReceived = null,
+        bool idleTimeout = false,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         CallCount++;
         LastArguments = arguments;
-        return Task.FromResult(resultFactory(executablePath, arguments));
+        Calls.Add(arguments.ToArray());
+        LastTimeout = timeout;
+        LastIdleTimeout = idleTimeout;
+        var result = resultFactory(executablePath, arguments);
+        foreach (var line in result.Output.OrderBy(line => line.Sequence))
+        {
+            outputReceived?.Invoke(line);
+            AfterOutput?.Invoke(line);
+        }
+
+        return Task.FromResult(result);
     }
 }
 
@@ -69,6 +89,56 @@ internal sealed class StubSteamCmdService : ISteamCmdService
     }
 
     public List<string> DownloadedIds { get; } = [];
+
+    public int BatchCallCount { get; private set; }
+
+    public async Task<IReadOnlyList<DownloadResult>> DownloadBatchAsync(
+        IReadOnlyList<DownloadRequest> requests,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        BatchCallCount++;
+        var results = new List<DownloadResult>();
+        var cancelled = false;
+        foreach (var request in requests)
+        {
+            DownloadResult result;
+            try
+            {
+                if (cancelled) { throw new OperationCanceledException(); }
+                result = await DownloadAsync(request, progress, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                result = new DownloadResult
+                {
+                    WorkshopId = request.WorkshopId,
+                    ContentPath = Path.Combine(request.LibraryRoot, request.WorkshopId),
+                    Status = OperationStatus.Cancelled,
+                };
+            }
+            catch (IOException exception)
+            {
+                result = new DownloadResult
+                {
+                    WorkshopId = request.WorkshopId,
+                    ContentPath = Path.Combine(request.LibraryRoot, request.WorkshopId),
+                    Status = OperationStatus.Failed,
+                    Error = exception.Message,
+                };
+            }
+
+            results.Add(result);
+            cancelled |= result.Status == OperationStatus.Cancelled;
+            progress?.Report(new OperationProgress(
+                "DownloadItemCompleted", results.Count, requests.Count, request.WorkshopId, result.Status.ToString())
+            {
+                ItemResult = result,
+            });
+        }
+
+        return results;
+    }
 
     public Task<SteamCmdInstallationResult> EnsureInstalledAsync(
         IProgress<OperationProgress>? progress = null,
@@ -125,6 +195,56 @@ internal sealed class FixedTimeProvider : TimeProvider
     }
 
     public override DateTimeOffset GetUtcNow() => utcNow;
+}
+
+internal sealed class ManualTimeProvider : TimeProvider, IDisposable
+{
+    private TimeSpan elapsed;
+    private ManualTimer? timer;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        timer = new ManualTimer(this, callback, state);
+        timer.Change(dueTime, period);
+        return timer;
+    }
+
+    public void Advance(TimeSpan duration)
+    {
+        elapsed += duration;
+        timer?.Tick();
+    }
+
+    public void Dispose() => timer?.Dispose();
+
+    private sealed class ManualTimer(ManualTimeProvider clock, TimerCallback callback, object? state) : ITimer
+    {
+        private TimeSpan? due;
+        private TimeSpan period;
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            due = dueTime == Timeout.InfiniteTimeSpan ? null : clock.elapsed + dueTime;
+            this.period = period;
+            return true;
+        }
+
+        public void Tick()
+        {
+            if (due is { } deadline && clock.elapsed >= deadline)
+            {
+                due = period == Timeout.InfiniteTimeSpan ? null : clock.elapsed + period;
+                callback(state);
+            }
+        }
+
+        public void Dispose() => due = null;
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
 }
 
 internal sealed class StubFileDeletionService : IFileDeletionService

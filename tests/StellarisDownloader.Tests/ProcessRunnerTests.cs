@@ -6,6 +6,35 @@ namespace StellarisDownloader.Tests;
 public sealed class ProcessRunnerTests
 {
     [Fact]
+    public async Task IdleTimeoutResetsOnEveryOutputLineUsingInjectedClock()
+    {
+        using var clock = new ManualTimeProvider();
+        var runner = new ProcessRunner(clock);
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var run = runner.RunAsync(
+            "powershell.exe",
+            ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.WriteLine('one'); [Console]::Error.WriteLine('two'); [Console]::Out.WriteLine('ready'); Wait-Event"],
+            Environment.CurrentDirectory,
+            TimeSpan.FromMinutes(10),
+            outputReceived: line =>
+            {
+                if (line.Sequence < 3) { clock.Advance(TimeSpan.FromMinutes(9)); }
+                else { ready.TrySetResult(); }
+            },
+            idleTimeout: true);
+
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        clock.Advance(TimeSpan.FromMinutes(9));
+        Assert.False(run.IsCompleted);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var result = await run.WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.True(result.TimedOut);
+        Assert.False(result.Cancelled);
+        Assert.Equal(3, result.Output.Count);
+    }
+
+    [Fact]
     public async Task CapturesStdoutStderrAndDiagnosticExitCode()
     {
         var runner = new ProcessRunner();

@@ -74,143 +74,221 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
         }
     }
 
+    public const int MaximumItemsPerProcess = 25;
+    public static readonly TimeSpan DownloadIdleTimeout = TimeSpan.FromMinutes(10);
+
     public async Task<DownloadResult> DownloadAsync(
         DownloadRequest request,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var normalizedRoot = NormalizePath(request.LibraryRoot);
-        if (!IsValidWorkshopId(request.WorkshopId))
-        {
-            return FailedDownload(
-                request.WorkshopId,
-                normalizedRoot,
-                "Workshop ID must contain only ASCII digits.");
-        }
+        var results = await DownloadCoreAsync([request], retryUnknown: false, progress, cancellationToken)
+            .ConfigureAwait(false);
+        return results[0];
+    }
 
-        var contentPath = Path.Combine(normalizedRoot, request.WorkshopId);
+    public Task<IReadOnlyList<DownloadResult>> DownloadBatchAsync(
+        IReadOnlyList<DownloadRequest> requests,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        DownloadCoreAsync(requests, retryUnknown: true, progress, cancellationToken);
 
-        if (request.Timeout <= TimeSpan.Zero)
+    private async Task<IReadOnlyList<DownloadResult>> DownloadCoreAsync(
+        IReadOnlyList<DownloadRequest> requests,
+        bool retryUnknown,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        var results = new List<DownloadResult>(requests.Count);
+        var completed = new HashSet<int>();
+        var cancelled = false;
+        foreach (var chunk in requests.Chunk(MaximumItemsPerProcess))
         {
-            return FailedDownload(request.WorkshopId, contentPath, "Download timeout must be positive.");
-        }
-
-        var installation = await EnsureInstalledAsync(progress, cancellationToken).ConfigureAwait(false);
-        if (installation.Status != OperationStatus.Succeeded)
-        {
-            return new DownloadResult
+            var offset = results.Count;
+            progress?.Report(new OperationProgress(
+                "DownloadingQueue", completed.Count, requests.Count, chunk[0].WorkshopId,
+                $"Downloading queue item {offset + 1} of {requests.Count}."));
+            void Report(int index, DownloadResult result)
             {
-                WorkshopId = request.WorkshopId,
-                Status = installation.Status,
-                ContentPath = contentPath,
-                Error = installation.Error,
-            };
+                completed.Add(offset + index);
+                progress?.Report(new OperationProgress(
+                    "DownloadItemCompleted", completed.Count, requests.Count,
+                    result.WorkshopId, $"{result.WorkshopId}: {result.Status}")
+                {
+                    ItemResult = result,
+                });
+            }
+
+            var (chunkResults, unknown) = await RunChunkAsync(
+                chunk, Report, progress, cancelled ? new CancellationToken(true) : cancellationToken)
+                .ConfigureAwait(false);
+            foreach (var index in unknown)
+            {
+                if (retryUnknown)
+                {
+                    var (retryResults, _) = await RunChunkAsync(
+                        [chunk[index]], (_, result) => Report(index, result), progress,
+                        cancelled ? new CancellationToken(true) : cancellationToken).ConfigureAwait(false);
+                    chunkResults[index] = retryResults[0];
+                    cancelled |= chunkResults[index].Status == OperationStatus.Cancelled;
+                }
+
+                if (!completed.Contains(offset + index))
+                {
+                    Report(index, chunkResults[index]);
+                }
+            }
+
+            results.AddRange(chunkResults);
+            cancelled |= chunkResults.Any(result => result.Status == OperationStatus.Cancelled);
+        }
+
+        return results;
+    }
+
+    private async Task<(DownloadResult[] Results, List<int> Unknown)> RunChunkAsync(
+        DownloadRequest[] requests,
+        Action<int, DownloadResult> report,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var results = new DownloadResult[requests.Length];
+        var pending = new List<int>();
+        var unknown = new List<int>();
+        for (var index = 0; index < requests.Length; index++)
+        {
+            var request = requests[index];
+            ArgumentNullException.ThrowIfNull(request);
+            var root = NormalizePath(request.LibraryRoot);
+            if (!IsValidWorkshopId(request.WorkshopId))
+            {
+                results[index] = FailedDownload(request.WorkshopId, root, "Workshop ID must contain only ASCII digits.");
+                report(index, results[index]);
+            }
+            else
+            {
+                pending.Add(index);
+            }
         }
 
         try
         {
-            progress?.Report(new OperationProgress(
-                "DownloadingWorkshopItem",
-                Completed: 0,
-                Total: 1,
-                request.WorkshopId,
-                $"Starting SteamCMD download for Workshop item {request.WorkshopId}."));
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pending.Count == 0)
+            {
+                return (results, unknown);
+            }
+
+            var installation = await EnsureInstalledAsync(progress, cancellationToken).ConfigureAwait(false);
+            if (installation.Status != OperationStatus.Succeeded)
+            {
+                CompletePending(installation.Status, installation.Error);
+                return (results, unknown);
+            }
+
+            var arguments = new List<string> { "+login", "anonymous" };
+            foreach (var index in pending)
+            {
+                arguments.AddRange(["+workshop_download_item", "281990", requests[index].WorkshopId]);
+            }
+            arguments.Add("+quit");
             var processResult = await processRunner.RunAsync(
-                executablePath,
-                [
-                    "+login",
-                    "anonymous",
-                    "+workshop_download_item",
-                    StellarisAppId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    request.WorkshopId,
-                    "+quit",
-                ],
-                steamCmdDirectory,
-                request.Timeout,
-                progress,
-                cancellationToken).ConfigureAwait(false);
-            var outputLines = processResult.Output
-                .OrderBy(line => line.Sequence)
-                .Select(line => line.Text)
-                .ToArray();
-            var folderExists = Directory.Exists(contentPath);
-            var folderNonEmpty = folderExists && Directory.EnumerateFileSystemEntries(contentPath).Any();
-
-            if (processResult.Cancelled)
-            {
-                return new DownloadResult
+                executablePath, arguments, steamCmdDirectory, DownloadIdleTimeout, progress,
+                outputReceived: line =>
                 {
-                    WorkshopId = request.WorkshopId,
-                    Status = OperationStatus.Cancelled,
-                    ContentPath = contentPath,
-                    FolderExists = folderExists,
-                    FolderNonEmpty = folderNonEmpty,
-                    ExitCode = processResult.ExitCode,
-                    OutputLines = outputLines,
-                    Error = "SteamCMD download was cancelled.",
-                };
-            }
-
-            if (processResult.TimedOut)
+                    foreach (var index in pending)
+                    {
+                        var state = SteamCmdOutputClassifier.Classify(requests[index].WorkshopId, [line]);
+                        if (state != SteamCmdTerminalState.Unknown)
+                        {
+                            results[index] = BuildDownloadResult(requests[index], state, [line.Text]);
+                            report(index, results[index]);
+                        }
+                    }
+                },
+                idleTimeout: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var output = processResult.Output.OrderBy(line => line.Sequence).Select(line => line.Text).ToArray();
+            foreach (var index in pending)
             {
-                return new DownloadResult
+                var request = requests[index];
+                var state = SteamCmdOutputClassifier.Classify(request.WorkshopId, processResult.Output);
+                var alreadyReported = results[index] is not null;
+                var result = results[index] ?? BuildDownloadResult(request, state, output);
+                if (state == SteamCmdTerminalState.Unknown && !alreadyReported)
                 {
-                    WorkshopId = request.WorkshopId,
-                    Status = OperationStatus.Failed,
-                    ContentPath = contentPath,
-                    FolderExists = folderExists,
-                    FolderNonEmpty = folderNonEmpty,
-                    ExitCode = processResult.ExitCode,
-                    TimedOut = true,
-                    OutputLines = outputLines,
-                    Error = $"SteamCMD timed out after {request.Timeout}.",
-                };
+                    if (processResult.Cancelled || processResult.TimedOut)
+                    {
+                        result = result with
+                        {
+                            Status = processResult.Cancelled ? OperationStatus.Cancelled : OperationStatus.Failed,
+                            TimedOut = !processResult.Cancelled && processResult.TimedOut,
+                            Error = processResult.Cancelled
+                                ? "SteamCMD download was cancelled."
+                                : $"SteamCMD timed out after {DownloadIdleTimeout} without output.",
+                        };
+                    }
+                    else
+                    {
+                        unknown.Add(index);
+                    }
+                }
+
+                results[index] = result with { ExitCode = processResult.ExitCode, OutputLines = output };
+                if (!alreadyReported && !unknown.Contains(index))
+                {
+                    report(index, results[index]);
+                }
             }
-
-            var terminalState = SteamCmdOutputClassifier.Classify(
-                request.WorkshopId,
-                processResult.Output);
-            var succeeded = terminalState == SteamCmdTerminalState.Succeeded
-                && folderExists
-                && folderNonEmpty;
-            progress?.Report(new OperationProgress(
-                "DownloadingWorkshopItem",
-                Completed: 1,
-                Total: 1,
-                request.WorkshopId,
-                succeeded
-                    ? $"Downloaded Workshop item {request.WorkshopId}."
-                    : $"SteamCMD could not verify Workshop item {request.WorkshopId}."));
-
-            return new DownloadResult
-            {
-                WorkshopId = request.WorkshopId,
-                Status = succeeded ? OperationStatus.Succeeded : OperationStatus.Failed,
-                ContentPath = contentPath,
-                FolderExists = folderExists,
-                FolderNonEmpty = folderNonEmpty,
-                ExitCode = processResult.ExitCode,
-                OutputLines = outputLines,
-                Error = succeeded
-                    ? null
-                    : BuildDownloadError(terminalState, folderExists, folderNonEmpty, outputLines),
-            };
         }
         catch (OperationCanceledException)
         {
-            return new DownloadResult
-            {
-                WorkshopId = request.WorkshopId,
-                Status = OperationStatus.Cancelled,
-                ContentPath = contentPath,
-                Error = "SteamCMD download was cancelled.",
-            };
+            CompletePending(OperationStatus.Cancelled, "SteamCMD download was cancelled.");
         }
         catch (Exception exception) when (IsOperationalFailure(exception))
         {
-            return FailedDownload(request.WorkshopId, contentPath, exception.Message);
+            CompletePending(OperationStatus.Failed, exception.Message);
         }
+
+        return (results, unknown);
+
+        void CompletePending(OperationStatus status, string? error)
+        {
+            foreach (var index in pending.Where(index => results[index] is null))
+            {
+                var request = requests[index];
+                results[index] = new DownloadResult
+                {
+                    WorkshopId = request.WorkshopId,
+                    Status = status,
+                    ContentPath = Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId),
+                    Error = error,
+                };
+                report(index, results[index]);
+            }
+        }
+    }
+
+    private static DownloadResult BuildDownloadResult(
+        DownloadRequest request,
+        SteamCmdTerminalState terminalState,
+        IReadOnlyList<string> outputLines)
+    {
+        var contentPath = Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId);
+        var folderExists = Directory.Exists(contentPath);
+        var folderNonEmpty = folderExists && Directory.EnumerateFileSystemEntries(contentPath).Any();
+        var succeeded = terminalState == SteamCmdTerminalState.Succeeded && folderNonEmpty;
+        return new DownloadResult
+        {
+            WorkshopId = request.WorkshopId,
+            Status = succeeded ? OperationStatus.Succeeded : OperationStatus.Failed,
+            ContentPath = contentPath,
+            FolderExists = folderExists,
+            FolderNonEmpty = folderNonEmpty,
+            OutputLines = outputLines,
+            Error = succeeded ? null : BuildDownloadError(terminalState, folderExists, folderNonEmpty, outputLines),
+        };
     }
 
     public void Dispose()
@@ -284,7 +362,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
                     steamCmdDirectory,
                     TimeSpan.FromMinutes(5),
                     progress,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 var executableExists = File.Exists(executablePath);
                 if (!verification.Cancelled
                     && !verification.TimedOut

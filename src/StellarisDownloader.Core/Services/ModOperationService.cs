@@ -389,54 +389,8 @@ public sealed class ModOperationService : IModOperationService
             return FailEntireBatch(normalizedRequests, exception.Message);
         }
 
-        var results = new List<DownloadResult>(normalizedRequests.Count);
-        for (var index = 0; index < normalizedRequests.Count; index++)
-        {
-            var request = normalizedRequests[index];
-            if (cancellationToken.IsCancellationRequested)
-            {
-                AddCancelledRemainder(normalizedRequests, index, results);
-                break;
-            }
-
-            progress?.Report(new OperationProgress(
-                "DownloadingQueue",
-                index,
-                normalizedRequests.Count,
-                request.WorkshopId,
-                $"Downloading queue item {index + 1} of {normalizedRequests.Count}."));
-            DownloadResult result;
-            try
-            {
-                result = await steamCmdService.DownloadAsync(request, progress, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                result = CancelledBeforeStart(request) with { Error = "Download was cancelled." };
-            }
-            catch (Exception exception) when (IsOperationalFailure(exception))
-            {
-                result = new DownloadResult
-                {
-                    WorkshopId = request.WorkshopId,
-                    Status = OperationStatus.Failed,
-                    ContentPath = BuildContentPath(request),
-                    Error = exception.Message,
-                };
-            }
-            results.Add(result);
-            progress?.Report(new OperationProgress(
-                "DownloadItemCompleted", index + 1, normalizedRequests.Count,
-                request.WorkshopId, $"{request.WorkshopId}: {result.Status}")
-            {
-                ItemResult = result,
-            });
-            if (result.Status == OperationStatus.Cancelled)
-            {
-                AddCancelledRemainder(normalizedRequests, index + 1, results);
-                break;
-            }
-        }
+        var results = await steamCmdService.DownloadBatchAsync(
+            normalizedRequests, progress, cancellationToken).ConfigureAwait(false);
 
         await PersistFinalResultsAsync(libraryRoot, results, progress).ConfigureAwait(false);
         return new DownloadBatchResult { Results = results };
@@ -593,16 +547,6 @@ public sealed class ModOperationService : IModOperationService
         };
     }
 
-    private static void AddCancelledRemainder(
-        List<DownloadRequest> requests,
-        int startIndex,
-        List<DownloadResult> results)
-    {
-        for (var index = startIndex; index < requests.Count; index++)
-        {
-            results.Add(CancelledBeforeStart(requests[index]));
-        }
-    }
 
     private static DownloadResult CancelledBeforeStart(DownloadRequest request)
     {

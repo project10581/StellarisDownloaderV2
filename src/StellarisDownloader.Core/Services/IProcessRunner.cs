@@ -10,5 +10,7 @@ public interface IProcessRunner
         string workingDirectory,
         TimeSpan timeout,
         IProgress<OperationProgress>? progress = null,
+        Action<ProcessOutputLine>? outputReceived = null,
+        bool idleTimeout = false,
         CancellationToken cancellationToken = default);
 }

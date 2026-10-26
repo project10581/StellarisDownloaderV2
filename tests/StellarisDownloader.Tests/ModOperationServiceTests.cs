@@ -92,6 +92,7 @@ public sealed class ModOperationServiceTests
             [fixture.Request("100"), fixture.Request("100"), fixture.Request("200")]);
 
         Assert.Equal(2, result.SucceededCount);
+        Assert.Equal(1, fixture.SteamCmd.BatchCallCount);
         Assert.Equal(["100", "200"], fixture.SteamCmd.DownloadedIds);
         Assert.Equal(1, maximumConcurrency);
         Assert.Equal(2L, await ExecuteScalarInt64Async(
