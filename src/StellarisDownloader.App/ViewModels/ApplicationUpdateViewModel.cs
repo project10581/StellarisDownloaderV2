@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisDownloader.Core.Models;
@@ -7,348 +5,160 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class ApplicationUpdateViewModel : ObservableObject, IDisposable
+public sealed partial class ApplicationUpdateViewModel : ObservableObject, IDisposable
 {
     private readonly IAppUpdateService appUpdateService;
     private readonly Func<Task>? prepareForRestart;
-    private readonly SynchronizationContext uiContext;
-    private readonly int uiThreadId;
-    private readonly AsyncRelayCommand checkCommand;
-    private readonly AsyncRelayCommand downloadCommand;
-    private readonly AsyncRelayCommand applyAndRestartCommand;
-    private readonly RelayCommand cancelCommand;
-    private readonly RelayCommand deferCommand;
     private CancellationTokenSource? activeCancellation;
-    private AppUpdateInfo? updateInfo;
-    private bool hasChecked;
-    private bool isBusy;
-    private string? currentStage;
-    private int progressCompleted;
-    private int progressTotal;
-    private string? progressMessage;
-    private string? statusMessage;
-    private string? lastError;
     private bool disposed;
 
-    public ApplicationUpdateViewModel(
-        IAppUpdateService appUpdateService,
-        Func<Task>? prepareForRestart = null,
-        SynchronizationContext? uiContext = null)
+    public ApplicationUpdateViewModel(IAppUpdateService appUpdateService, Func<Task>? prepareForRestart = null)
     {
         ArgumentNullException.ThrowIfNull(appUpdateService);
-
         this.appUpdateService = appUpdateService;
         this.prepareForRestart = prepareForRestart;
-        this.uiContext = uiContext
-            ?? SynchronizationContext.Current
-            ?? new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher);
-        uiThreadId = Environment.CurrentManagedThreadId;
-
-        checkCommand = new AsyncRelayCommand(
-            () => CheckAsync(CancellationToken.None),
-            () => CanCheck);
-        downloadCommand = new AsyncRelayCommand(
-            () => DownloadAsync(CancellationToken.None),
-            () => CanDownload);
-        applyAndRestartCommand = new AsyncRelayCommand(
-            () => ApplyAndRestartAsync(CancellationToken.None),
-            () => CanApplyAndRestart);
-        cancelCommand = new RelayCommand(Cancel, () => CanCancel);
-        deferCommand = new RelayCommand(Defer, () => CanDefer);
     }
 
-    public IAsyncRelayCommand CheckCommand => checkCommand;
-
-    public IAsyncRelayCommand DownloadCommand => downloadCommand;
-
-    public IAsyncRelayCommand ApplyAndRestartCommand => applyAndRestartCommand;
-
-    public IRelayCommand CancelCommand => cancelCommand;
-
-    public IRelayCommand DeferCommand => deferCommand;
-
-    public AppUpdateInfo? UpdateInfo
-    {
-        get => updateInfo;
-        private set
-        {
-            if (SetProperty(ref updateInfo, value))
-            {
-                OnPropertyChanged(nameof(CurrentVersion));
-                OnPropertyChanged(nameof(LatestVersion));
-                OnPropertyChanged(nameof(ReleaseNotes));
-                OnPropertyChanged(nameof(IsInstalled));
-                OnPropertyChanged(nameof(IsUpdateAvailable));
-                OnPropertyChanged(nameof(IsDownloaded));
-                NotifyCommandStates();
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CurrentVersion), nameof(LatestVersion), nameof(ReleaseNotes),
+        nameof(IsInstalled), nameof(IsUpdateAvailable), nameof(IsDownloaded),
+        nameof(CanDownload), nameof(CanApplyAndRestart), nameof(CanDefer))]
+    [NotifyCanExecuteChangedFor(nameof(CheckCommand), nameof(DownloadCommand), nameof(ApplyAndRestartCommand),
+        nameof(CancelCommand), nameof(DeferCommand))]
+    public partial AppUpdateInfo? UpdateInfo { get; private set; }
 
     public string? CurrentVersion => UpdateInfo?.CurrentVersion;
-
     public string? LatestVersion => UpdateInfo?.LatestVersion;
-
     public string? ReleaseNotes => UpdateInfo?.ReleaseNotes;
-
     public bool IsInstalled => UpdateInfo?.IsInstalled == true;
-
     public bool IsUpdateAvailable => UpdateInfo?.IsUpdateAvailable == true;
-
     public bool IsDownloaded => UpdateInfo?.IsDownloaded == true;
 
-    public bool HasChecked
-    {
-        get => hasChecked;
-        private set => SetProperty(ref hasChecked, value);
-    }
+    [ObservableProperty]
+    public partial bool HasChecked { get; private set; }
 
-    public bool IsBusy
-    {
-        get => isBusy;
-        private set
-        {
-            if (SetProperty(ref isBusy, value))
-            {
-                OnPropertyChanged(nameof(CanCheck));
-                OnPropertyChanged(nameof(CanDownload));
-                OnPropertyChanged(nameof(CanCancel));
-                OnPropertyChanged(nameof(CanApplyAndRestart));
-                OnPropertyChanged(nameof(CanDefer));
-                NotifyCommandStates();
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCheck), nameof(CanDownload), nameof(CanCancel),
+        nameof(CanApplyAndRestart), nameof(CanDefer))]
+    [NotifyCanExecuteChangedFor(nameof(CheckCommand), nameof(DownloadCommand), nameof(ApplyAndRestartCommand),
+        nameof(CancelCommand), nameof(DeferCommand))]
+    public partial bool IsBusy { get; private set; }
 
     public bool CanCheck => !IsBusy;
-
-    public bool CanDownload => !IsBusy
-        && IsInstalled
-        && IsUpdateAvailable
-        && !IsDownloaded;
-
-    public bool CanCancel => IsBusy
-        && activeCancellation is not null
-        && !activeCancellation.IsCancellationRequested;
-
+    public bool CanDownload => !IsBusy && IsInstalled && IsUpdateAvailable && !IsDownloaded;
+    public bool CanCancel => IsBusy && activeCancellation is { IsCancellationRequested: false };
     public bool CanApplyAndRestart => !IsBusy && IsDownloaded;
-
     public bool CanDefer => !IsBusy && IsDownloaded;
 
-    public string? CurrentStage
-    {
-        get => currentStage;
-        private set => SetProperty(ref currentStage, value);
-    }
+    [ObservableProperty]
+    public partial string? CurrentStage { get; private set; }
 
-    public int ProgressCompleted
-    {
-        get => progressCompleted;
-        private set
-        {
-            if (SetProperty(ref progressCompleted, value))
-            {
-                OnPropertyChanged(nameof(ProgressPercentage));
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProgressPercentage))]
+    public partial int ProgressCompleted { get; private set; }
 
-    public int ProgressTotal
-    {
-        get => progressTotal;
-        private set
-        {
-            if (SetProperty(ref progressTotal, value))
-            {
-                OnPropertyChanged(nameof(ProgressPercentage));
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProgressPercentage))]
+    public partial int ProgressTotal { get; private set; }
 
     public int ProgressPercentage => ProgressTotal <= 0
         ? 0
-        : Math.Clamp(
-            (int)Math.Round(
-                ProgressCompleted * 100d / ProgressTotal,
-                MidpointRounding.AwayFromZero),
-            0,
-            100);
+        : Math.Clamp((int)Math.Round(ProgressCompleted * 100d / ProgressTotal, MidpointRounding.AwayFromZero), 0, 100);
 
-    public string? ProgressMessage
-    {
-        get => progressMessage;
-        private set => SetProperty(ref progressMessage, value);
-    }
+    [ObservableProperty]
+    public partial string? ProgressMessage { get; private set; }
 
-    public string? StatusMessage
-    {
-        get => statusMessage;
-        private set => SetProperty(ref statusMessage, value);
-    }
+    [ObservableProperty]
+    public partial string? StatusMessage { get; private set; }
 
-    public string? LastError
-    {
-        get => lastError;
-        private set => SetProperty(ref lastError, value);
-    }
+    [ObservableProperty]
+    public partial string? LastError { get; private set; }
 
-    public async Task CheckAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var operation = await BeginOperationAsync(
-            CanCheck,
-            "CheckingApplicationUpdates",
-            "Checking for application updates.",
-            cancellationToken,
-            clearUpdateInfo: true).ConfigureAwait(false);
-        if (operation is null)
-        {
-            return;
-        }
-
-        var pendingProgress = new ConcurrentQueue<Task>();
-        var progress = CreateProgress(pendingProgress);
-        try
-        {
-            var result = await appUpdateService.CheckAsync(
-                progress,
-                operation.Token).ConfigureAwait(false);
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await InvokeOnUiAsync(() => ApplyCheckResult(result)).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
-        {
-            await InvokeOnUiAsync(() => SetCancelled("The application update check was cancelled."))
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
-        {
-            await InvokeOnUiAsync(() => SetFailure(exception.Message)).ConfigureAwait(false);
-        }
-        finally
-        {
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await FinishOperationAsync(operation).ConfigureAwait(false);
-        }
-    }
-
-    public async Task DownloadAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var operation = await BeginOperationAsync(
-            CanDownload,
-            "DownloadingApplicationUpdate",
-            "Downloading the application update.",
-            cancellationToken).ConfigureAwait(false);
-        if (operation is null)
-        {
-            return;
-        }
-
-        var pendingProgress = new ConcurrentQueue<Task>();
-        var progress = CreateProgress(pendingProgress);
-        try
-        {
-            var result = await appUpdateService.DownloadAsync(
-                progress,
-                operation.Token).ConfigureAwait(false);
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await InvokeOnUiAsync(() => ApplyDownloadResult(result)).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
-        {
-            await InvokeOnUiAsync(() => SetCancelled("The application update download was cancelled."))
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
-        {
-            await InvokeOnUiAsync(() => SetFailure(exception.Message)).ConfigureAwait(false);
-        }
-        finally
-        {
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await FinishOperationAsync(operation).ConfigureAwait(false);
-        }
-    }
-
-    public async Task ApplyAndRestartAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var operation = await BeginOperationAsync(
-            CanApplyAndRestart,
-            "ApplyingApplicationUpdate",
-            "Preparing to restart and apply the application update.",
-            cancellationToken).ConfigureAwait(false);
-        if (operation is null)
-        {
-            return;
-        }
-
-        var pendingProgress = new ConcurrentQueue<Task>();
-        var progress = CreateProgress(pendingProgress);
-        try
-        {
-            operation.Token.ThrowIfCancellationRequested();
-            if (prepareForRestart is not null)
+    [RelayCommand(CanExecute = nameof(CanCheck), AllowConcurrentExecutions = false)]
+    public Task CheckAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(CanCheck, "CheckingApplicationUpdates", "Checking for application updates.",
+            "The application update check was cancelled.", async (progress, token) =>
             {
-                var preparation = await InvokeOnUiAsync(prepareForRestart).ConfigureAwait(false);
-                await preparation.ConfigureAwait(false);
-            }
+                var result = await appUpdateService.CheckAsync(progress, token);
+                await Task.Yield();
+                ApplyCheckResult(result);
+            }, clearUpdateInfo: true, cancellationToken);
 
-            operation.Token.ThrowIfCancellationRequested();
-            await appUpdateService.ApplyAndRestartAsync(
-                progress,
-                operation.Token).ConfigureAwait(false);
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await InvokeOnUiAsync(() =>
+    [RelayCommand(CanExecute = nameof(CanDownload), AllowConcurrentExecutions = false)]
+    public Task DownloadAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(CanDownload, "DownloadingApplicationUpdate", "Downloading the application update.",
+            "The application update download was cancelled.", async (progress, token) =>
             {
+                var result = await appUpdateService.DownloadAsync(progress, token);
+                await Task.Yield();
+                ApplyDownloadResult(result);
+            }, clearUpdateInfo: false, cancellationToken);
+
+    [RelayCommand(CanExecute = nameof(CanApplyAndRestart), AllowConcurrentExecutions = false)]
+    public Task ApplyAndRestartAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(CanApplyAndRestart, "ApplyingApplicationUpdate", "Preparing to restart and apply the application update.",
+            "Restarting for the application update was cancelled.", async (progress, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                if (prepareForRestart is not null) { await prepareForRestart(); }
+                token.ThrowIfCancellationRequested();
+                await appUpdateService.ApplyAndRestartAsync(progress, token);
+                await Task.Yield();
                 CurrentStage = "RestartRequested";
                 StatusMessage = "The application update is ready and restart was requested.";
                 LastError = null;
-            }).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
+            }, clearUpdateInfo: false, cancellationToken);
+
+    private async Task RunAsync(
+        bool canStart, string stage, string status, string cancelledMessage,
+        Func<IProgress<OperationProgress>, CancellationToken, Task> action,
+        bool clearUpdateInfo, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        if (!canStart || IsBusy) { return; }
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        activeCancellation = source;
+        if (clearUpdateInfo) { UpdateInfo = null; HasChecked = false; }
+        IsBusy = true;
+        ResetOperationState(stage, status);
+        var progress = new Progress<OperationProgress>(ApplyProgress);
+        try
         {
-            await InvokeOnUiAsync(() => SetCancelled("Restarting for the application update was cancelled."))
-                .ConfigureAwait(false);
+            await action(progress, source.Token);
         }
-        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, source.Token))
         {
-            await InvokeOnUiAsync(() => SetFailure(exception.Message)).ConfigureAwait(false);
+            await Task.Yield();
+            SetCancelled(cancelledMessage);
+        }
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, source.Token))
+        {
+            await Task.Yield();
+            SetFailure(exception.Message);
         }
         finally
         {
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await FinishOperationAsync(operation).ConfigureAwait(false);
+            activeCancellation = null;
+            IsBusy = false;
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanCancel))]
     public void Cancel()
     {
         ThrowIfDisposed();
-        var cancellation = activeCancellation;
-        if (cancellation is null || cancellation.IsCancellationRequested)
-        {
-            return;
-        }
-
-        cancellation.Cancel();
-        _ = InvokeOnUiAsync(() =>
-        {
-            StatusMessage = "Cancellation requested.";
-            cancelCommand.NotifyCanExecuteChanged();
-        });
+        if (activeCancellation is not { IsCancellationRequested: false }) { return; }
+        activeCancellation.Cancel();
+        StatusMessage = "Cancellation requested.";
+        OnPropertyChanged(nameof(CanCancel));
+        CancelCommand.NotifyCanExecuteChanged();
     }
 
+    [RelayCommand(CanExecute = nameof(CanDefer))]
     public void Defer()
     {
         ThrowIfDisposed();
-        VerifyUiThread();
-        if (!CanDefer)
-        {
-            return;
-        }
-
+        if (!CanDefer) { return; }
         CurrentStage = "Deferred";
         StatusMessage = "The downloaded application update will be applied later.";
         LastError = null;
@@ -356,65 +166,12 @@ public sealed class ApplicationUpdateViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
-        if (disposed)
-        {
-            return;
-        }
-
+        if (disposed) { return; }
         disposed = true;
         activeCancellation?.Cancel();
         activeCancellation?.Dispose();
         activeCancellation = null;
         GC.SuppressFinalize(this);
-    }
-
-    private async Task<UpdateOperation?> BeginOperationAsync(
-        bool canStart,
-        string stage,
-        string status,
-        CancellationToken cancellationToken,
-        bool clearUpdateInfo = false)
-    {
-        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var started = await InvokeOnUiAsync(() =>
-        {
-            if (!canStart || IsBusy)
-            {
-                return false;
-            }
-
-            activeCancellation = source;
-            if (clearUpdateInfo)
-            {
-                UpdateInfo = null;
-                HasChecked = false;
-            }
-
-            IsBusy = true;
-            ResetOperationState(stage, status);
-            return true;
-        }).ConfigureAwait(false);
-        if (!started)
-        {
-            source.Dispose();
-            return null;
-        }
-
-        return new UpdateOperation(source);
-    }
-
-    private async Task FinishOperationAsync(UpdateOperation operation)
-    {
-        await InvokeOnUiAsync(() =>
-        {
-            if (ReferenceEquals(activeCancellation, operation.Source))
-            {
-                activeCancellation = null;
-            }
-
-            IsBusy = false;
-        }).ConfigureAwait(false);
-        operation.Dispose();
     }
 
     private void ApplyCheckResult(AppUpdateInfo result)
@@ -477,88 +234,5 @@ public sealed class ApplicationUpdateViewModel : ObservableObject, IDisposable
         LastError = null;
     }
 
-    private CallbackProgress<OperationProgress> CreateProgress(
-        ConcurrentQueue<Task> pendingProgress) =>
-        new(value => pendingProgress.Enqueue(InvokeOnUiAsync(() => ApplyProgress(value))));
-
-    private void NotifyCommandStates()
-    {
-        checkCommand.NotifyCanExecuteChanged();
-        downloadCommand.NotifyCanExecuteChanged();
-        applyAndRestartCommand.NotifyCanExecuteChanged();
-        cancelCommand.NotifyCanExecuteChanged();
-        deferCommand.NotifyCanExecuteChanged();
-    }
-
-    private Task<bool> InvokeOnUiAsync(Action action) =>
-        InvokeOnUiAsync(() =>
-        {
-            action();
-            return true;
-        });
-
-    private Task<T> InvokeOnUiAsync<T>(Func<T> action)
-    {
-        if (Environment.CurrentManagedThreadId == uiThreadId)
-        {
-            return Task.FromResult(action());
-        }
-
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        uiContext.Post(
-            _ =>
-            {
-                try
-                {
-                    completion.SetResult(action());
-                }
-                catch (Exception exception)
-                {
-                    completion.SetException(exception);
-                }
-            },
-            null);
-        return completion.Task;
-    }
-
-    private static async Task DrainProgressAsync(ConcurrentQueue<Task> pendingProgress)
-    {
-        while (!pendingProgress.IsEmpty)
-        {
-            var pending = new List<Task>();
-            while (pendingProgress.TryDequeue(out var update))
-            {
-                pending.Add(update);
-            }
-
-            if (pending.Count > 0)
-            {
-                await Task.WhenAll(pending).ConfigureAwait(false);
-            }
-        }
-    }
-
-    private void VerifyUiThread()
-    {
-        if (Environment.CurrentManagedThreadId != uiThreadId)
-        {
-            throw new InvalidOperationException("This operation must run on the UI thread.");
-        }
-    }
-
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
-
-    private sealed class CallbackProgress<T>(Action<T> callback) : IProgress<T>
-    {
-        public void Report(T value) => callback(value);
-    }
-
-    private sealed class UpdateOperation(CancellationTokenSource source) : IDisposable
-    {
-        public CancellationTokenSource Source { get; } = source;
-
-        public CancellationToken Token => Source.Token;
-
-        public void Dispose() => Source.Dispose();
-    }
 }
