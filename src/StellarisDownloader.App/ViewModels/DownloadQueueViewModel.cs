@@ -297,11 +297,11 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
                     cancellation.Token).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             wasCancelled = true;
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             batchFailure = exception.Message;
         }
@@ -490,7 +490,7 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
                 addedItems.Select(item => item.WorkshopId).ToArray(),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() =>
             {
@@ -505,7 +505,7 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
             }).ConfigureAwait(false);
             throw;
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             metadata = new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal);
             lookupError = $"Title lookup failed: {exception.Message}";
@@ -691,14 +691,6 @@ public sealed class DownloadQueueViewModel : ObservableObject, IDisposable
         item.Status is DownloadQueueItemStatus.Pending
             or DownloadQueueItemStatus.Ready
             or DownloadQueueItemStatus.Cancelled;
-
-    private static bool IsOperationalFailure(Exception exception) =>
-        exception is HttpRequestException
-            or IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or ArgumentException
-            or NotSupportedException;
 
     private void ThrowIfDisposed()
     {

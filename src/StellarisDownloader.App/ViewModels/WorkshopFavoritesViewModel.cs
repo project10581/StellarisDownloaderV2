@@ -9,11 +9,13 @@ public sealed class WorkshopFavoritesViewModel(IWorkshopFavoritesStore store) : 
 {
     private IReadOnlyList<WorkshopFavorite> items = [];
     private string? lastError;
+    private string? warning;
     private int pendingOperations;
     private Task pendingOperation = Task.CompletedTask;
 
     public IReadOnlyList<WorkshopFavorite> Items { get => items; private set => SetProperty(ref items, value); }
     public string? LastError { get => lastError; private set => SetProperty(ref lastError, value); }
+    public string? Warning { get => warning; private set => SetProperty(ref warning, value); }
     public bool IsBusy => pendingOperations > 0;
     public bool IsIdle => !IsBusy;
     public bool Contains(string id) => Items.Any(item => item.WorkshopId == id);
@@ -52,10 +54,10 @@ public sealed class WorkshopFavoritesViewModel(IWorkshopFavoritesStore store) : 
             await previous;
             LastError = null;
             Items = await operation();
+            Warning = store.Warning;
             return true;
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException
-            or ArgumentException or InvalidOperationException or System.Security.SecurityException)
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception))
         {
             LastError = exception.Message;
             return false;

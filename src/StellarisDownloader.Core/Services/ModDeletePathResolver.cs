@@ -18,26 +18,26 @@ public static class ModDeletePathResolver
         var parent = Path.GetDirectoryName(target);
         if (!string.Equals(parent, normalizedRoot, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException(
+            throw new StellarisOperationException(
                 $"Refusing to delete a path outside the current library root: {target}");
         }
 
         if (string.Equals(target, normalizedRoot, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Refusing to delete the library root.");
+            throw new StellarisOperationException("Refusing to delete the library root.");
         }
 
         if (TryGetAttributes(target, out var attributes))
         {
             if ((attributes & FileAttributes.ReparsePoint) != 0)
             {
-                throw new InvalidOperationException(
+                throw new StellarisOperationException(
                     $"Refusing to delete a reparse-point mod directory: {target}");
             }
 
             if ((attributes & FileAttributes.Directory) == 0)
             {
-                throw new InvalidOperationException(
+                throw new StellarisOperationException(
                     $"Refusing to delete a mod target that is not a directory: {target}");
             }
         }

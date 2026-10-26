@@ -15,6 +15,28 @@ namespace StellarisDownloader.Tests;
 public sealed class ModSnapshotsViewModelTests
 {
     [Fact]
+    public void CorruptSnapshotIsReportedAndOtherHistoryVersionsRemainAvailable()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var temporary = new TemporaryDirectory();
+            var history = new ModSnapshotHistory(temporary.GetPath("snapshots"));
+            var validPath = await history.SaveAsync(ModSnapshotTests.Snapshot("100"));
+            var corruptPath = System.IO.Path.Combine(history.DirectoryPath, "broken.json");
+            await System.IO.File.WriteAllTextAsync(corruptPath, "broken");
+            var viewModel = new ModSnapshotsViewModel(new SnapshotServiceStub(ModSnapshotTests.Snapshot("100")), history, key => key);
+
+            await viewModel.LoadHistoryAsync();
+            Assert.Equal(validPath, Assert.Single(viewModel.HistoryVersions).FilePath);
+            await viewModel.CompareFilesAsync(validPath, corruptPath);
+
+            Assert.Equal("该快照文件已损坏", viewModel.LastError);
+            Assert.False(viewModel.IsBusy);
+            Assert.Equal(validPath, Assert.Single(viewModel.HistoryVersions).FilePath);
+        });
+    }
+
+    [Fact]
     public void SelectingAnOldListInTheWindowAutomaticallyComparesAgainstTheScannedLibrary()
     {
         WpfTestRunner.Run(async () =>

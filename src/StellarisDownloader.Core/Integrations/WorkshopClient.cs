@@ -234,7 +234,7 @@ public sealed class WorkshopClient : IWorkshopClient, IDisposable
         {
             TripPersonaLookupCircuit();
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (TaskCanceledException exception) when (OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             TripPersonaLookupCircuit();
         }
@@ -312,7 +312,7 @@ public sealed class WorkshopClient : IWorkshopClient, IDisposable
         {
             return [];
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (TaskCanceledException exception) when (OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             return [];
         }

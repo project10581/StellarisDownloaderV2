@@ -216,12 +216,12 @@ public sealed class ApplicationUpdateViewModel : ObservableObject, IDisposable
             await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
             await InvokeOnUiAsync(() => ApplyCheckResult(result)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetCancelled("The application update check was cancelled."))
                 .ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetFailure(exception.Message)).ConfigureAwait(false);
         }
@@ -255,12 +255,12 @@ public sealed class ApplicationUpdateViewModel : ObservableObject, IDisposable
             await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
             await InvokeOnUiAsync(() => ApplyDownloadResult(result)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetCancelled("The application update download was cancelled."))
                 .ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetFailure(exception.Message)).ConfigureAwait(false);
         }
@@ -307,12 +307,12 @@ public sealed class ApplicationUpdateViewModel : ObservableObject, IDisposable
                 LastError = null;
             }).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetCancelled("Restarting for the application update was cancelled."))
                 .ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetFailure(exception.Message)).ConfigureAwait(false);
         }

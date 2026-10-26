@@ -572,7 +572,7 @@ public sealed class SqliteModRepository : IModRepository, IDisposable
     {
         if (!await IsUsableForRootAsync(connection, normalizedRoot, cancellationToken).ConfigureAwait(false))
         {
-            throw new InvalidOperationException(
+            throw new StellarisOperationException(
                 "The mod cache is stale or belongs to a different library root.");
         }
     }

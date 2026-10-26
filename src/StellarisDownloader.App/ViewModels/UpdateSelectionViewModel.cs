@@ -198,7 +198,7 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
             await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
             await InvokeOnUiAsync(() => ApplyCheckResults(libraryRoot, results)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() =>
             {
@@ -206,7 +206,7 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
                 StatusMessage = "The update check was cancelled.";
             }).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => SetCheckFailure(exception.Message)).ConfigureAwait(false);
         }
@@ -256,11 +256,11 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
                 result,
                 operation.IsCancellationRequested)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => ApplyCancelledUpdate(operation.WorkshopIds)).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await InvokeOnUiAsync(() => ApplyFailedUpdate(
                 operation.WorkshopIds,
@@ -651,15 +651,6 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
-
-    private static bool IsOperationalFailure(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or InvalidDataException
-            or ArgumentException
-            or NotSupportedException
-            or HttpRequestException;
 
     private sealed class CallbackProgress<T>(Action<T> callback) : IProgress<T>
     {

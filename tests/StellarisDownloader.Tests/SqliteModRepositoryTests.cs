@@ -1,3 +1,4 @@
+using StellarisDownloader.Core.Services;
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 using StellarisDownloader.Core.Models;
@@ -73,9 +74,9 @@ public sealed class SqliteModRepositoryTests
         Assert.Equal(CacheState.RootMismatch, (await repository.GetCacheStateAsync(secondRoot)).State);
         Assert.Empty(await repository.ListAsync(secondRoot));
         Assert.Null(await repository.GetAsync(secondRoot, "100"));
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Assert.ThrowsAsync<StellarisOperationException>(
             () => repository.UpsertFinalResultAsync(secondRoot, CreateRecord(secondRoot, "200", "Second")));
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Assert.ThrowsAsync<StellarisOperationException>(
             () => repository.DeleteAsync(secondRoot, "100"));
     }
 

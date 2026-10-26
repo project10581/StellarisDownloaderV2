@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.Services;
 
@@ -34,11 +35,11 @@ public sealed class PreviewImageService : IPreviewImageService
         {
             return await task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             throw;
         }
-        catch (Exception exception) when (IsImageLoadFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken) || exception is InvalidDataException)
         {
             cache.TryRemove(uri.AbsoluteUri, out _);
             return null;
@@ -81,14 +82,16 @@ public sealed class PreviewImageService : IPreviewImageService
         image.BeginInit();
         image.CacheOption = BitmapCacheOption.OnLoad;
         image.StreamSource = buffer;
-        image.EndInit();
+        try
+        {
+            image.EndInit();
+        }
+        catch (NotSupportedException exception)
+        {
+            // BitmapImage.EndInit rejects images whose encoded format has no supported decoder.
+            throw new InvalidDataException(exception.Message, exception);
+        }
         image.Freeze();
         return image;
     }
-
-    private static bool IsImageLoadFailure(Exception exception) =>
-        exception is HttpRequestException
-            or IOException
-            or InvalidDataException
-            or NotSupportedException;
 }

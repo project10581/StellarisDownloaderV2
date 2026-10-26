@@ -165,7 +165,7 @@ public sealed class ModSnapshotsViewModel(
         StatusMessage = text("Snapshots.FirstSaveHint");
         if (SelectedBaselineVersion?.FilePath is { } path)
         {
-            var baseline = await ModSnapshotFile.ReadAsync(path, token);
+            var baseline = await ReadSnapshotAsync(path, token);
             ShowComparison(baseline, liveSnapshot);
         }
     }
@@ -192,7 +192,7 @@ public sealed class ModSnapshotsViewModel(
     {
         SelectedBaselineVersion = HistoryVersions.FirstOrDefault(item => item.FilePath == baselinePath);
         ClearResults();
-        var baseline = await ModSnapshotFile.ReadAsync(baselinePath, token);
+        var baseline = await ReadSnapshotAsync(baselinePath, token);
         var current = await snapshotService.CaptureAsync(token);
         liveSnapshot = current;
         IsFileComparison = false;
@@ -206,8 +206,8 @@ public sealed class ModSnapshotsViewModel(
         ClearResults();
         IsFileComparison = true;
         OnPropertyChanged(nameof(CurrentSourceLabel));
-        var baseline = await ModSnapshotFile.ReadAsync(baselinePath, token);
-        var current = await ModSnapshotFile.ReadAsync(currentPath, token);
+        var baseline = await ReadSnapshotAsync(baselinePath, token);
+        var current = await ReadSnapshotAsync(currentPath, token);
         ShowComparison(baseline, current);
     });
 
@@ -260,7 +260,19 @@ public sealed class ModSnapshotsViewModel(
     {
         if (history.IsManagedVersionPath(path))
         {
-            throw new InvalidOperationException(text("Snapshots.ProtectedHistory"));
+            throw new StellarisOperationException(text("Snapshots.ProtectedHistory"));
+        }
+    }
+
+    private static async Task<ModSnapshot> ReadSnapshotAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ModSnapshotFile.ReadAsync(path, cancellationToken);
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new StellarisOperationException("该快照文件已损坏", exception);
         }
     }
 
@@ -284,9 +296,7 @@ public sealed class ModSnapshotsViewModel(
         {
             StatusMessage = text("Snapshots.Cancelled");
         }
-        catch (Exception exception) when (
-            exception is IOException or InvalidDataException or UnauthorizedAccessException or SecurityException
-                or InvalidOperationException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellation.Token))
         {
             LastError = exception.Message;
             StatusMessage = text("Snapshots.Error");

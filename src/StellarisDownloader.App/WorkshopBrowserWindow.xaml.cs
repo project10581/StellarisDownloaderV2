@@ -93,28 +93,36 @@ public partial class WorkshopBrowserWindow : Window
             return;
         }
 
+        await favorites.LoadAsync().ConfigureAwait(true);
+        if (closed) { return; }
         try
         {
-            await favorites.LoadAsync().ConfigureAwait(true);
-            if (closed) { return; }
             _ = CoreWebView2Environment.GetAvailableBrowserVersionString(null);
-            await WorkshopWebView.EnsureCoreWebView2Async().ConfigureAwait(true);
-            if (closed) { return; }
-            ConfigureBrowser();
-            browserInitialized = true;
-            WorkshopWebView.Visibility = Visibility.Visible;
-            WorkshopWebView.CoreWebView2.Navigate(WorkshopHome.AbsoluteUri);
         }
         catch (WebView2RuntimeNotFoundException)
         {
             RuntimeMissingPanel.Visibility = Visibility.Visible;
             BrowserStatusText.Visibility = Visibility.Visible;
+            return;
+        }
+
+        try
+        {
+            await WorkshopWebView.EnsureCoreWebView2Async().ConfigureAwait(true);
         }
         catch (Exception exception) when (exception is InvalidOperationException or COMException)
         {
+            // EnsureCoreWebView2Async fails when the control was disposed during initialization.
             BrowserStatusText.Text = exception.Message;
             BrowserStatusText.Visibility = Visibility.Visible;
+            return;
         }
+
+        if (closed) { return; }
+        ConfigureBrowser();
+        browserInitialized = true;
+        WorkshopWebView.Visibility = Visibility.Visible;
+        WorkshopWebView.CoreWebView2.Navigate(WorkshopHome.AbsoluteUri);
     }
 
     private void ConfigureBrowser()
@@ -171,17 +179,21 @@ public partial class WorkshopBrowserWindow : Window
             return;
         }
 
+        var script = WorkshopBridgeScriptLoader.Load();
         try
         {
             await WorkshopWebView.CoreWebView2.ExecuteScriptAsync(
-                WorkshopBridgeScriptLoader.Load()).ConfigureAwait(true);
-            await SyncBrowserStateAsync().ConfigureAwait(true);
+                script).ConfigureAwait(true);
         }
         catch (InvalidOperationException exception)
         {
+            // ExecuteScriptAsync fails when the WebView2 control is uninitialized or disposed.
             BrowserStatusText.Text = exception.Message;
             BrowserStatusText.Visibility = Visibility.Visible;
+            return;
         }
+
+        await SyncBrowserStateAsync().ConfigureAwait(true);
     }
 
     private void Core_SourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
@@ -273,7 +285,7 @@ public partial class WorkshopBrowserWindow : Window
         {
             // Closing or cancelling a lookup leaves the shared queue in a valid state.
         }
-        catch (Exception exception) when (IsBrowserStateFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception))
         {
             BrowserStatusText.Text = exception.Message;
             BrowserStatusText.Visibility = Visibility.Visible;
@@ -350,7 +362,7 @@ public partial class WorkshopBrowserWindow : Window
             {
                 installedIds = await installedStateProvider.GetInstalledWorkshopIdsAsync().ConfigureAwait(true);
             }
-            catch (Exception exception) when (IsBrowserStateFailure(exception))
+            catch (Exception exception) when (OperationalFailure.IsRecoverable(exception))
             {
                 // A missing/unreadable mod library must not prevent restoring browser favorites.
                 BrowserStatusText.Text = exception.Message;
@@ -376,7 +388,7 @@ public partial class WorkshopBrowserWindow : Window
         {
             // A later navigation or application close owns the browser state.
         }
-        catch (Exception exception) when (IsBrowserStateFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception))
         {
             BrowserStatusText.Text = exception.Message;
             BrowserStatusText.Visibility = Visibility.Visible;
@@ -386,6 +398,10 @@ public partial class WorkshopBrowserWindow : Window
     private void Favorites_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         UpdateFavoriteCurrentButton();
+        if (e.PropertyName == nameof(WorkshopFavoritesViewModel.Warning) && favorites.Warning is { } warning)
+        {
+            MessageBox.Show(this, warning, "Stellaris Downloader", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         if (e.PropertyName == nameof(WorkshopFavoritesViewModel.LastError) && favorites.LastError is { } error)
         {
             BrowserStatusText.Text = error;
@@ -515,17 +531,10 @@ public partial class WorkshopBrowserWindow : Window
         }
         catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
         {
+            // Process.Start can fail when the shell has no usable handler for the target.
             BrowserStatusText.Text = exception.Message;
             BrowserStatusText.Visibility = Visibility.Visible;
         }
     }
 
-    private static bool IsBrowserStateFailure(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or ArgumentException
-            or NotSupportedException
-            or COMException
-            or SqliteException;
 }

@@ -39,7 +39,7 @@ public sealed class ModDeletePathResolverTests
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "123"), "not a directory");
 
-        Assert.Throws<InvalidOperationException>(() => ModDeletePathResolver.Resolve(root, "123"));
+        Assert.Throws<StellarisOperationException>(() => ModDeletePathResolver.Resolve(root, "123"));
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class ModDeletePathResolverTests
 
         try
         {
-            Assert.Throws<InvalidOperationException>(
+            Assert.Throws<StellarisOperationException>(
                 () => ModDeletePathResolver.Resolve(root, "123"));
             Assert.True(File.Exists(sentinel));
         }

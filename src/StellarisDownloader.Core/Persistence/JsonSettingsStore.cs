@@ -41,10 +41,17 @@ public sealed class JsonSettingsStore : ISettingsStore, IDisposable
                 bufferSize: 4096,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-            var settings = await JsonSerializer.DeserializeAsync<AppSettings>(
-                stream,
-                SerializerOptions,
-                cancellationToken).ConfigureAwait(false);
+            AppSettings? settings;
+            try
+            {
+                settings = await JsonSerializer.DeserializeAsync<AppSettings>(
+                    stream, SerializerOptions, cancellationToken).ConfigureAwait(false);
+            }
+            catch (NotSupportedException exception)
+            {
+                // JsonSerializer.DeserializeAsync rejects document types without a supported converter.
+                throw new InvalidDataException(exception.Message, exception);
+            }
 
             if (settings is null)
             {
@@ -55,7 +62,7 @@ public sealed class JsonSettingsStore : ISettingsStore, IDisposable
             return new SettingsLoadResult(settings, RequiresInitialization: false, CorruptBackupPath: null);
         }
         catch (Exception exception) when (
-            exception is JsonException or InvalidDataException or NotSupportedException)
+            exception is JsonException or InvalidDataException)
         {
             var backupPath = MoveCorruptSettingsAside();
             return new SettingsLoadResult(new AppSettings(), RequiresInitialization: true, backupPath);

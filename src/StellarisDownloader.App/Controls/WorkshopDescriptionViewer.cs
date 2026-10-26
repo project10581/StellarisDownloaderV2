@@ -671,6 +671,7 @@ public sealed class WorkshopDescriptionViewer : FlowDocumentScrollViewer
         }
         catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
         {
+            // Process.Start can fail when the shell has no usable handler for the target.
             // Link activation is best-effort; rendering remains safe and usable if the shell fails.
         }
     }

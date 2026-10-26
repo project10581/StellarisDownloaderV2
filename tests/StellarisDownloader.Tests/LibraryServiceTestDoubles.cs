@@ -3,6 +3,24 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.Tests;
 
+internal sealed class FailingReadModRepository(IModRepository inner) : IModRepository
+{
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => inner.InitializeAsync(cancellationToken);
+    public Task<IReadOnlyList<ModRecord>> ListAsync(string libraryRoot, CancellationToken cancellationToken = default) =>
+        throw new IOException("The cache file could not be read.");
+    public Task<ModRecord?> GetAsync(string libraryRoot, string workshopId, CancellationToken cancellationToken = default) =>
+        inner.GetAsync(libraryRoot, workshopId, cancellationToken);
+    public Task UpsertFinalResultAsync(string libraryRoot, ModRecord record, CancellationToken cancellationToken = default) =>
+        inner.UpsertFinalResultAsync(libraryRoot, record, cancellationToken);
+    public Task<bool> DeleteAsync(string libraryRoot, string workshopId, CancellationToken cancellationToken = default) =>
+        inner.DeleteAsync(libraryRoot, workshopId, cancellationToken);
+    public Task ReplaceSnapshotAsync(string libraryRoot, IReadOnlyCollection<ModRecord> records, DateTimeOffset rebuiltAtUtc,
+        CancellationToken cancellationToken = default) => inner.ReplaceSnapshotAsync(libraryRoot, records, rebuiltAtUtc, cancellationToken);
+    public Task<CacheStateInfo> GetCacheStateAsync(string? expectedLibraryRoot, CancellationToken cancellationToken = default) =>
+        inner.GetCacheStateAsync(expectedLibraryRoot, cancellationToken);
+    public Task MarkCacheStaleAsync(CancellationToken cancellationToken = default) => inner.MarkCacheStaleAsync(cancellationToken);
+}
+
 internal sealed class StubSettingsStore : ISettingsStore
 {
     public StubSettingsStore(AppSettings settings)

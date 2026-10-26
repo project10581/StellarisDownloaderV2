@@ -1,3 +1,4 @@
+using StellarisDownloader.Core.Services;
 using StellarisDownloader.Core.Integrations;
 
 namespace StellarisDownloader.Tests;
@@ -37,7 +38,7 @@ public sealed class WindowsFileDeletionServiceTests
 
         try
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(
+            await Assert.ThrowsAsync<StellarisOperationException>(
                 () => service.DeleteDirectoryPermanentlyAsync(junctionPath));
             Assert.True(File.Exists(sentinel));
         }

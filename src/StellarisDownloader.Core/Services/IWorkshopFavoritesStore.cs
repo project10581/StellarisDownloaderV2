@@ -4,6 +4,8 @@ namespace StellarisDownloader.Core.Services;
 
 public interface IWorkshopFavoritesStore
 {
+    string? Warning { get; }
+
     Task<IReadOnlyList<WorkshopFavorite>> LoadAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<WorkshopFavorite>> SetFavoriteAsync(

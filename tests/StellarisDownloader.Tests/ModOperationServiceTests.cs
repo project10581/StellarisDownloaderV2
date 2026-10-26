@@ -7,6 +7,18 @@ namespace StellarisDownloader.Tests;
 
 public sealed class ModOperationServiceTests
 {
+    [Fact]
+    public async Task DownloadBatchPropagatesProgrammingErrors()
+    {
+        var expected = new InvalidOperationException("Programming error.");
+        using var fixture = await ModOperationFixture.CreateAsync((_, _) => throw expected);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Service.DownloadBatchAsync([fixture.Request("100")]));
+
+        Assert.Same(expected, actual);
+    }
+
     private static readonly DateTimeOffset InitialTime = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset CompletionTime = new(2026, 7, 17, 0, 0, 0, TimeSpan.Zero);
 

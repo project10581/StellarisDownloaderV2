@@ -69,6 +69,7 @@ public sealed class WorkshopFavoritesTests
 
     private sealed class DelayedFavoritesStore(IWorkshopFavoritesStore inner) : IWorkshopFavoritesStore
     {
+        public string? Warning => inner.Warning;
         public TaskCompletionSource AllowWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool FailWrites { get; set; }
         public Task<IReadOnlyList<WorkshopFavorite>> LoadAsync(CancellationToken cancellationToken = default) =>
@@ -132,7 +133,7 @@ public sealed class WorkshopFavoritesTests
     [InlineData("{}")]
     [InlineData("{\"schemaVersion\":2,\"favorites\":[]}")]
     [InlineData("{\"schemaVersion\":1,\"favorites\":[null]}")]
-    public async Task UnreadableFavoritesArePreservedAndErrorsSurfaceInTheBrowser(string content)
+    public async Task UnreadableFavoritesAreBackedUpBeforeLoadingAndAddingAFavorite(string content)
     {
         using var directory = new TemporaryDirectory();
         var path = directory.GetPath("favorites.json");
@@ -140,11 +141,35 @@ public sealed class WorkshopFavoritesTests
         using var store = new WorkshopFavoritesStore(path);
         var viewModel = new WorkshopFavoritesViewModel(store);
         await viewModel.LoadAsync();
-        Assert.NotNull(viewModel.LastError);
+        Assert.Null(viewModel.LastError);
+        Assert.NotNull(viewModel.Warning);
+        Assert.Empty(viewModel.Items);
+        var backup = Assert.Single(Directory.GetFiles(directory.GetPath(""), "*.corrupt-*.json"));
+        Assert.Equal(content, await File.ReadAllTextAsync(backup));
         await viewModel.SetFavoriteAsync("100", true);
-        Assert.NotNull(viewModel.LastError);
+        Assert.Null(viewModel.LastError);
         Assert.True(viewModel.IsIdle);
-        Assert.Equal(content, await File.ReadAllTextAsync(path));
+        Assert.Equal("100", Assert.Single(await store.LoadAsync()).WorkshopId);
+        Assert.Equal(content, await File.ReadAllTextAsync(backup));
+    }
+
+    [Fact]
+    public async Task InvalidFavoriteIdsAreSkippedAndLoggedWhileValidEntriesRemain()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = directory.GetPath("favorites.json");
+        await File.WriteAllTextAsync(path, """
+            {"schemaVersion":1,"favorites":[
+              {"workshopId":"123","savedAtUtc":"2026-01-01T00:00:00Z"},
+              {"workshopId":"١٢٣","savedAtUtc":"2026-01-01T00:00:00Z"}]}
+            """);
+        var warnings = new List<string>();
+        using var store = new WorkshopFavoritesStore(path, warnings.Add);
+
+        Assert.Equal("123", Assert.Single(await store.LoadAsync()).WorkshopId);
+        Assert.Single(warnings);
+        Assert.Empty(Directory.GetFiles(directory.GetPath(""), "*.corrupt-*.json"));
+        await Assert.ThrowsAsync<ArgumentException>(() => new WorkshopFavoritesViewModel(store).SetFavoriteAsync("invalid", true));
     }
 
     [Theory]

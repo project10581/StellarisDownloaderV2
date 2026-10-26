@@ -139,7 +139,7 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (InvalidOperationException)
         {
-            // The process exited between the state check and the kill request.
+            // Process.Kill throws if the process exits between HasExited and the kill request.
         }
     }
 }

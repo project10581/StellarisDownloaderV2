@@ -209,6 +209,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
         {
+            // Process.Start can fail when the shell has no usable handler for the target.
             ShowOpenError(exception.Message);
         }
     }

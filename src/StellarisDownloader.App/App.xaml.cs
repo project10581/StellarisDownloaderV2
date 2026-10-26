@@ -25,6 +25,34 @@ public partial class App : Application, IDisposable
     private ApplicationUpdateViewModel? applicationUpdateViewModel;
     private bool disposed;
 
+    public App()
+    {
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+    }
+
+    private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        ReportUnhandledException(e.Exception);
+        e.Handled = true;
+    }
+
+    private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        ReportUnhandledException(e.Exception);
+        e.SetObserved();
+    }
+
+    private void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e) =>
+        ReportUnhandledException((Exception)e.ExceptionObject);
+
+    private static void ReportUnhandledException(Exception exception)
+    {
+        Log.Error(exception, "An unhandled application error occurred.");
+        MessageBox.Show(exception.Message, "Stellaris Downloader", MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -37,7 +65,8 @@ public partial class App : Application, IDisposable
             paths.EnsureDirectories();
 
             settingsStore = new JsonSettingsStore(paths.SettingsFile);
-            favoritesStore = new WorkshopFavoritesStore(paths.WorkshopFavoritesFile);
+            favoritesStore = new WorkshopFavoritesStore(paths.WorkshopFavoritesFile,
+                warning => Log.Warning("{FavoritesWarning}", warning));
             var favoritesViewModel = new WorkshopFavoritesViewModel(favoritesStore);
             modRepository = new SqliteModRepository(paths.DatabaseFile);
             await modRepository.InitializeAsync().ConfigureAwait(true);
@@ -139,7 +168,7 @@ public partial class App : Application, IDisposable
                 {
                     if (writeCoordinator.IsBusy)
                     {
-                        throw new InvalidOperationException(
+                        throw new StellarisOperationException(
                             "Wait for the active write operation before applying the update.");
                     }
 
@@ -271,6 +300,9 @@ public partial class App : Application, IDisposable
         }
 
         disposed = true;
+        DispatcherUnhandledException -= OnDispatcherUnhandledException;
+        TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
+        AppDomain.CurrentDomain.UnhandledException -= OnDomainUnhandledException;
         applicationUpdateViewModel?.Dispose();
         appUpdateService?.Dispose();
         downloadQueueViewModel?.Dispose();

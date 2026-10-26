@@ -41,13 +41,13 @@ public sealed class WindowsFileDeletionService : IFileDeletionService
         var attributes = File.GetAttributes(directoryPath);
         if ((attributes & FileAttributes.ReparsePoint) != 0)
         {
-            throw new InvalidOperationException(
+            throw new StellarisOperationException(
                 $"Refusing to delete a reparse-point directory: {directoryPath}");
         }
 
         if ((attributes & FileAttributes.Directory) == 0)
         {
-            throw new InvalidOperationException(
+            throw new StellarisOperationException(
                 $"Refusing to delete a path that is not a directory: {directoryPath}");
         }
     }

@@ -20,7 +20,7 @@ public sealed class ModSnapshotService(
         var settings = await settingsStore.LoadAsync(cancellationToken).ConfigureAwait(false);
         if (settings.RequiresInitialization || string.IsNullOrWhiteSpace(settings.Settings.LibraryRoot))
         {
-            throw new InvalidOperationException("Select a mod library in Settings before exporting or comparing it.");
+            throw new StellarisOperationException("Select a mod library in Settings before exporting or comparing it.");
         }
 
         var inventory = LocalModDirectoryScanner.Scan(
@@ -31,9 +31,7 @@ public sealed class ModSnapshotService(
         {
             records = await modRepository.ListAsync(inventory.LibraryRoot, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or SecurityException
-                or SqliteException or InvalidOperationException)
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             // Disk membership is still usable when the disposable metadata cache cannot be read.
             metadataUnavailable = true;

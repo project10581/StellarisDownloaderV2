@@ -46,7 +46,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
         {
             await installationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             return new SteamCmdInstallationResult(
                 OperationStatus.Cancelled,
@@ -242,11 +242,11 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
                 }
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             CompletePending(OperationStatus.Cancelled, "SteamCMD download was cancelled.");
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             CompletePending(OperationStatus.Failed, exception.Message);
         }
@@ -418,7 +418,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
                 InstalledNow: true,
                 Error: null);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             File.Delete(executablePath);
             return new SteamCmdInstallationResult(
@@ -427,7 +427,7 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
                 InstalledNow: false,
                 "SteamCMD installation was cancelled.");
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken) || exception is InvalidDataException)
         {
             File.Delete(executablePath);
             return new SteamCmdInstallationResult(
@@ -547,15 +547,6 @@ public sealed class SteamCmdService : ISteamCmdService, IDisposable
             Error = error,
         };
     }
-
-    private static bool IsOperationalFailure(Exception exception) =>
-        exception is HttpRequestException
-            or IOException
-            or InvalidDataException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or Win32Exception
-            or NotSupportedException;
 
     private static bool IsValidWorkshopId(string workshopId) =>
         !string.IsNullOrWhiteSpace(workshopId) && workshopId.All(char.IsAsciiDigit);

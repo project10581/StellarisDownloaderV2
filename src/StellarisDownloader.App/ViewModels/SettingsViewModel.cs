@@ -189,11 +189,11 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                 switchResult.Error ?? "The mod library could not be switched.",
                 switchResult.RequiresManualRepair);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             throw;
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return SetFailure(exception.Message);
         }
@@ -249,28 +249,33 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             return false;
         }
 
+        string normalizedLeft;
         try
         {
-            return string.Equals(
-                NormalizePath(left),
-                NormalizePath(right),
-                StringComparison.OrdinalIgnoreCase);
+            normalizedLeft = Path.GetFullPath(left);
         }
         catch (Exception exception) when (
             exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
+            // Path.GetFullPath rejects malformed user-entered library paths.
             return false;
         }
-    }
 
-    private static bool IsOperationalFailure(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or InvalidDataException
-            or ArgumentException
-            or NotSupportedException
-            or SqliteException;
+        string normalizedRight;
+        try
+        {
+            normalizedRight = Path.GetFullPath(right);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Path.GetFullPath rejects malformed user-entered library paths.
+            return false;
+        }
+
+        return string.Equals(Path.TrimEndingDirectorySeparator(normalizedLeft),
+            Path.TrimEndingDirectorySeparator(normalizedRight), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string NormalizePath(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

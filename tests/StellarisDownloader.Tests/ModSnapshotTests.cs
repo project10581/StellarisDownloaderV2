@@ -50,7 +50,7 @@ public sealed class ModSnapshotTests
         using var repository = new SqliteModRepository(temporary.GetPath("not-initialized.db"));
         using var coordinator = new WriteOperationCoordinator();
         var service = new ModSnapshotService(
-            new StubSettingsStore(new AppSettings { LibraryRoot = temporary.Path }), repository, coordinator);
+            new StubSettingsStore(new AppSettings { LibraryRoot = temporary.Path }), new FailingReadModRepository(repository), coordinator);
 
         var snapshot = await service.CaptureAsync();
 
@@ -65,6 +65,7 @@ public sealed class ModSnapshotTests
         using var temporary = new TemporaryDirectory();
         var missing = temporary.GetPath("missing");
         using var repository = new SqliteModRepository(temporary.GetPath("cache.db"));
+        await repository.InitializeAsync();
         using var coordinator = new WriteOperationCoordinator();
         var settings = new StubSettingsStore(new AppSettings { LibraryRoot = missing });
         var service = new ModSnapshotService(settings, repository, coordinator);
@@ -82,6 +83,7 @@ public sealed class ModSnapshotTests
         using var temporary = new TemporaryDirectory();
         var root = temporary.GetPath("library");
         using var repository = new SqliteModRepository(temporary.GetPath("cache.db"));
+        await repository.InitializeAsync();
         using var coordinator = new WriteOperationCoordinator();
         var settings = new StubSettingsStore(new AppSettings());
         var service = new ModSnapshotService(settings, repository, coordinator);
@@ -103,6 +105,18 @@ public sealed class ModSnapshotTests
             release.TrySetResult(true);
             await writer;
         }
+    }
+
+    [Fact]
+    public async Task UninitializedRepositoryIsAProgrammingError()
+    {
+        using var temporary = new TemporaryDirectory();
+        using var repository = new SqliteModRepository(temporary.GetPath("cache.db"));
+        using var coordinator = new WriteOperationCoordinator();
+        var service = new ModSnapshotService(
+            new StubSettingsStore(new AppSettings { LibraryRoot = temporary.Path }), repository, coordinator);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.CaptureAsync());
     }
 
     [Fact]

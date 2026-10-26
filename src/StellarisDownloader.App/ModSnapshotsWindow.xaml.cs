@@ -122,6 +122,7 @@ public partial class ModSnapshotsWindow : Window
         }
         catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
         {
+            // Process.Start can fail when the shell has no usable handler for the target.
             ShowError(exception.Message);
         }
     }

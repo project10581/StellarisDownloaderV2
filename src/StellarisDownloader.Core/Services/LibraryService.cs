@@ -123,7 +123,7 @@ public sealed class LibraryService : ILibraryService
                 update.Changed,
                 Error: null);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return new JunctionEnsureResult(
                 OperationStatus.Failed,
@@ -163,7 +163,7 @@ public sealed class LibraryService : ILibraryService
                 progress,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await TryMarkCacheStaleAsync().ConfigureAwait(false);
             return FailedScan(normalizedRoot, exception.Message);
@@ -199,7 +199,7 @@ public sealed class LibraryService : ILibraryService
                 : await modRepository.ListAsync(previousRoot, cancellationToken).ConfigureAwait(false);
             Directory.CreateDirectory(normalizedRoot);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return FailedSwitch(normalizedRoot, previousRoot: null, exception.Message);
         }
@@ -218,7 +218,7 @@ public sealed class LibraryService : ILibraryService
                 normalizedRoot,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return FailedSwitch(normalizedRoot, previousRoot, exception.Message);
         }
@@ -228,7 +228,7 @@ public sealed class LibraryService : ILibraryService
         {
             await settingsStore.SaveAsync(normalizedSettings, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception saveException) when (IsOperationalFailure(saveException))
+        catch (Exception saveException) when (OperationalFailure.IsRecoverable(saveException, cancellationToken))
         {
             try
             {
@@ -237,7 +237,7 @@ public sealed class LibraryService : ILibraryService
                     CancellationToken.None).ConfigureAwait(false);
                 return FailedSwitch(normalizedRoot, previousRoot, saveException.Message);
             }
-            catch (Exception restoreException) when (IsOperationalFailure(restoreException))
+            catch (Exception restoreException) when (OperationalFailure.IsRecoverable(restoreException, cancellationToken))
             {
                 return new LibrarySwitchResult
                 {
@@ -279,7 +279,7 @@ public sealed class LibraryService : ILibraryService
                 ScanResult = scanResult,
             };
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             await TryMarkCacheStaleAsync().ConfigureAwait(false);
             return new LibrarySwitchResult
@@ -430,13 +430,16 @@ public sealed class LibraryService : ILibraryService
         string normalizedRoot;
         try
         {
-            normalizedRoot = NormalizePath(libraryRoot);
+            normalizedRoot = Path.GetFullPath(libraryRoot);
         }
         catch (Exception exception) when (
-            exception is ArgumentException or NotSupportedException or PathTooLongException or SecurityException)
+            exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
+            // Path.GetFullPath rejects malformed user-entered library paths.
             return new LibraryValidationResult(false, NormalizedPath: null, exception.Message);
         }
+
+        normalizedRoot = Path.TrimEndingDirectorySeparator(normalizedRoot);
 
         if (File.Exists(normalizedRoot))
         {
@@ -460,7 +463,7 @@ public sealed class LibraryService : ILibraryService
         {
             await modRepository.MarkCacheStaleAsync(CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, CancellationToken.None))
         {
             // The root binding still prevents displaying old rows if recording stale state fails.
         }
@@ -490,28 +493,11 @@ public sealed class LibraryService : ILibraryService
         };
     }
 
-    private static bool IsOperationalFailure(Exception exception)
-    {
-        return exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or InvalidDataException
-            or ArgumentException
-            or NotSupportedException
-            or SecurityException
-            or SqliteException;
-    }
-
     private static bool IsMetadataLookupFailure(
         Exception exception,
         CancellationToken cancellationToken) =>
-        exception is OperationCanceledException
-            ? !cancellationToken.IsCancellationRequested
-            : exception is HttpRequestException
-                or IOException
-                or InvalidDataException
-                or TimeoutException
-                or System.Text.Json.JsonException;
+        OperationalFailure.IsRecoverable(exception, cancellationToken)
+            || exception is InvalidDataException or System.Text.Json.JsonException;
 
     private static string? NormalizeOptionalPath(string? path) =>
         string.IsNullOrWhiteSpace(path) ? null : NormalizePath(path);

@@ -333,11 +333,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             CanModifyLibrary = true;
             State = LibraryViewState.Ready;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             throw;
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             ClearItems();
             CanModifyLibrary = false;
@@ -427,11 +427,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 Error = actionError,
             };
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             throw;
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             LastError = exception.Message;
             return new SelectedModDeletionResult
@@ -569,18 +569,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 PreviewImage = image;
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             // A newer selection owns the preview area.
         }
     }
 
-    private static bool IsOperationalFailure(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or InvalidDataException
-            or ArgumentException
-            or NotSupportedException
-            or SqliteException;
 }

@@ -43,7 +43,7 @@ public sealed class ModSnapshotHistory
                     entries.Add(new ModSnapshotHistoryEntry(path, snapshot.CapturedAtUtc, snapshot.SourceLibrary, snapshot.Mods.Count));
                 }
                 catch (Exception exception) when (
-                    exception is IOException or InvalidDataException or UnauthorizedAccessException or SecurityException)
+                    exception is IOException or InvalidDataException or UnauthorizedAccessException)
                 {
                     unreadableCount++;
                 }

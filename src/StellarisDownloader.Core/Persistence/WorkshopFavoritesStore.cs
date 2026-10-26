@@ -5,7 +5,7 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.Core.Persistence;
 
-public sealed class WorkshopFavoritesStore(string path) : IWorkshopFavoritesStore, IDisposable
+public sealed class WorkshopFavoritesStore(string path, Action<string>? logWarning = null) : IWorkshopFavoritesStore, IDisposable
 {
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
@@ -14,6 +14,8 @@ public sealed class WorkshopFavoritesStore(string path) : IWorkshopFavoritesStor
     };
     private readonly string filePath = Path.GetFullPath(path);
     private readonly SemaphoreSlim gate = new(1, 1);
+
+    public string? Warning { get; private set; }
 
     public async Task<IReadOnlyList<WorkshopFavorite>> LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -34,7 +36,7 @@ public sealed class WorkshopFavoritesStore(string path) : IWorkshopFavoritesStor
             var existing = items.FindIndex(item => item.WorkshopId == workshopId);
             if (favorite && existing < 0)
             {
-                if (items.Count >= 10000) { throw new InvalidOperationException("The favorites list is full."); }
+                if (items.Count >= 10000) { throw new StellarisOperationException("The favorites list is full."); }
                 items.Insert(0, new WorkshopFavorite
                 {
                     WorkshopId = workshopId,
@@ -85,6 +87,25 @@ public sealed class WorkshopFavoritesStore(string path) : IWorkshopFavoritesStor
 
     private async Task<IReadOnlyList<WorkshopFavorite>> ReadAsync(CancellationToken cancellationToken)
     {
+        Warning = null;
+        try
+        {
+            return await ParseAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd'T'HHmmssfffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+            var backupPath = Path.Combine(Path.GetDirectoryName(filePath)!,
+                $"{Path.GetFileNameWithoutExtension(filePath)}.corrupt-{timestamp}.json");
+            File.Move(filePath, backupPath);
+            Warning = $"The favorites file was damaged. A backup was saved to {backupPath}.";
+            logWarning?.Invoke(Warning);
+            return [];
+        }
+    }
+
+    private async Task<IReadOnlyList<WorkshopFavorite>> ParseAsync(CancellationToken cancellationToken)
+    {
         if (!File.Exists(filePath)) { return []; }
         try
         {
@@ -98,18 +119,24 @@ public sealed class WorkshopFavoritesStore(string path) : IWorkshopFavoritesStor
                 throw new InvalidDataException("The favorites file has an unsupported format.");
             }
             var ids = new HashSet<string>(StringComparer.Ordinal);
+            var validItems = new List<WorkshopFavorite>();
             foreach (var item in document.Favorites)
             {
                 if (item is null) { throw new InvalidDataException("The favorites file contains an invalid item."); }
-                ValidateId(item.WorkshopId);
+                if (string.IsNullOrEmpty(item.WorkshopId) || item.WorkshopId.Length > 20 || !item.WorkshopId.All(char.IsAsciiDigit))
+                {
+                    logWarning?.Invoke($"Skipped a favorite with an invalid Workshop ID: {item.WorkshopId}");
+                    continue;
+                }
                 if (!ids.Add(item.WorkshopId) || item.Title?.Length > 1024)
                 {
                     throw new InvalidDataException("The favorites file contains duplicate or invalid items.");
                 }
+                validItems.Add(item);
             }
-            return document.Favorites.OrderByDescending(item => item.SavedAtUtc).ToArray();
+            return validItems.OrderByDescending(item => item.SavedAtUtc).ToArray();
         }
-        catch (Exception exception) when (exception is JsonException or ArgumentException)
+        catch (JsonException exception)
         {
             throw new InvalidDataException("The favorites file is invalid. Its contents have been preserved.", exception);
         }

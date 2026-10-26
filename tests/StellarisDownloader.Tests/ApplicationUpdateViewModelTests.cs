@@ -205,7 +205,7 @@ public sealed class ApplicationUpdateViewModelTests
     }
 
     [Fact]
-    public void CustomCheckFailureIsExposedInsteadOfEscapingTheViewModel()
+    public void UnknownCheckFailurePropagatesAndReleasesTheBusyState()
     {
         WpfTestRunner.Run(async () =>
         {
@@ -216,12 +216,11 @@ public sealed class ApplicationUpdateViewModelTests
             };
             using var viewModel = new ApplicationUpdateViewModel(service);
 
-            await viewModel.CheckAsync();
+            await Assert.ThrowsAsync<UpdateTransportException>(() => viewModel.CheckAsync());
 
-            Assert.True(viewModel.HasChecked);
+            Assert.False(viewModel.HasChecked);
             Assert.False(viewModel.IsBusy);
-            Assert.Equal("Failed", viewModel.CurrentStage);
-            Assert.Equal("The release feed could not be decoded.", viewModel.LastError);
+            Assert.Null(viewModel.LastError);
             Assert.False(viewModel.IsUpdateAvailable);
             Assert.True(viewModel.CanCheck);
             Assert.Equal(0, service.DownloadCallCount);
@@ -306,7 +305,7 @@ public sealed class ApplicationUpdateViewModelTests
             };
             using var viewModel = new ApplicationUpdateViewModel(
                 service,
-                () => throw new InvalidOperationException("A mod operation is still running."));
+                () => throw new StellarisOperationException("A mod operation is still running."));
             await viewModel.CheckAsync();
 
             await viewModel.ApplyAndRestartAsync();

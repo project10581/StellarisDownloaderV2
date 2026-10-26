@@ -53,7 +53,7 @@ public sealed class ModOperationService : IModOperationService
                 token => DownloadBatchCoreAsync(requests, progress, token),
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             return new DownloadBatchResult
             {
@@ -138,7 +138,7 @@ public sealed class ModOperationService : IModOperationService
                     token),
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             return new DeleteResult
             {
@@ -188,7 +188,7 @@ public sealed class ModOperationService : IModOperationService
                 },
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
             var deleteResult = new DeleteResult
             {
@@ -213,7 +213,7 @@ public sealed class ModOperationService : IModOperationService
         {
             contentPath = ModDeletePathResolver.Resolve(libraryRoot, workshopId);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return FailedDelete(
                 workshopId,
@@ -262,7 +262,7 @@ public sealed class ModOperationService : IModOperationService
                         cancellationToken).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
             {
                 return new DeleteResult
                 {
@@ -272,7 +272,7 @@ public sealed class ModOperationService : IModOperationService
                     Error = "Delete operation was cancelled.",
                 };
             }
-            catch (Exception exception) when (IsOperationalFailure(exception))
+            catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
             {
                 return new DeleteResult
                 {
@@ -331,7 +331,7 @@ public sealed class ModOperationService : IModOperationService
                 RecordRemoved = recordRemoved,
             };
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return new DeleteResult
             {
@@ -384,7 +384,7 @@ public sealed class ModOperationService : IModOperationService
                 libraryRoot,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
             return FailEntireBatch(normalizedRequests, exception.Message);
         }
@@ -413,7 +413,7 @@ public sealed class ModOperationService : IModOperationService
                 progress,
                 CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception exception) when (IsOperationalFailure(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, CancellationToken.None))
         {
             metadata = new Dictionary<string, WorkshopMetadata>(StringComparer.Ordinal);
         }
@@ -582,14 +582,6 @@ public sealed class ModOperationService : IModOperationService
         IsValidWorkshopId(request.WorkshopId)
             ? Path.Combine(NormalizePath(request.LibraryRoot), request.WorkshopId)
             : NormalizePath(request.LibraryRoot);
-
-    private static bool IsOperationalFailure(Exception exception) =>
-        exception is HttpRequestException
-            or IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or ArgumentException
-            or NotSupportedException;
 
     private static bool IsValidWorkshopId(string workshopId) =>
         !string.IsNullOrWhiteSpace(workshopId) && workshopId.All(char.IsAsciiDigit);

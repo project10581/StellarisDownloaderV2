@@ -247,7 +247,7 @@ public sealed class UpdateSelectionViewModelTests
         {
             var operations = new UpdateOperationStub
             {
-                CheckHandler = (_, _, _) => throw new InvalidOperationException(
+                CheckHandler = (_, _, _) => throw new StellarisOperationException(
                     "The cache belongs to another library root."),
             };
             using var viewModel = CreateViewModel(operations);

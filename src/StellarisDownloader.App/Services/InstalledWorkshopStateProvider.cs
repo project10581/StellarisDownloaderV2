@@ -70,7 +70,10 @@ public sealed class InstalledWorkshopStateProvider : IInstalledWorkshopStateProv
         try
         {
             var expectedPath = NormalizePath(Path.Combine(libraryRoot, record.WorkshopId));
-            var contentPath = NormalizePath(record.ContentPath);
+            if (!TryNormalizePath(record.ContentPath, out var contentPath))
+            {
+                return false;
+            }
             var parentPath = Path.GetDirectoryName(expectedPath);
             if (!PathsEqual(contentPath, expectedPath)
                 || !PathsEqual(parentPath, libraryRoot))
@@ -80,7 +83,7 @@ public sealed class InstalledWorkshopStateProvider : IInstalledWorkshopStateProv
 
             return LocalModDirectoryScanner.IsRegularNonEmptyDirectory(expectedPath);
         }
-        catch (Exception exception) when (IsPerItemFileOrPathException(exception))
+        catch (Exception exception) when (OperationalFailure.IsRecoverable(exception))
         {
             return false;
         }
@@ -90,22 +93,18 @@ public sealed class InstalledWorkshopStateProvider : IInstalledWorkshopStateProv
     {
         try
         {
-            normalizedPath = NormalizePath(path);
-            return true;
+            normalizedPath = Path.GetFullPath(path);
         }
-        catch (Exception exception) when (IsPerItemFileOrPathException(exception))
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException)
         {
+            // Path.GetFullPath rejects malformed paths read from settings or cached external records.
             normalizedPath = string.Empty;
             return false;
         }
-    }
 
-    private static bool IsPerItemFileOrPathException(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or SecurityException
-            or ArgumentException
-            or NotSupportedException;
+        normalizedPath = Path.TrimEndingDirectorySeparator(normalizedPath);
+        return true;
+    }
 
     private static string NormalizePath(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
