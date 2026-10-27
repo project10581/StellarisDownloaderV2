@@ -48,19 +48,13 @@ public partial class ModSnapshotsWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e) =>
         await viewModel.InitializeAsync().ConfigureAwait(true);
 
-    private async void SaveVersion_Click(object sender, RoutedEventArgs e) =>
-        await viewModel.SaveVersionAsync().ConfigureAwait(true);
-
     private async void Baseline_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (viewModel is not null && !viewModel.IsBusy && IsLoaded)
         {
-            await viewModel.SelectBaselineAsync(BaselineSelector.SelectedItem as SnapshotSourceViewModel).ConfigureAwait(true);
+            await viewModel.SelectBaselineCommand.ExecuteAsync(BaselineSelector.SelectedItem).ConfigureAwait(true);
         }
     }
-
-    private async void RefreshHistory_Click(object sender, RoutedEventArgs e) =>
-        await viewModel.LoadHistoryAsync().ConfigureAwait(true);
 
     private async void CompareFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -88,7 +82,7 @@ public partial class ModSnapshotsWindow : Window
         };
         if (dialog.ShowDialog(this) is true)
         {
-            await viewModel.ExportReportAsync(dialog.FileName).ConfigureAwait(true);
+            await viewModel.ExportReportCommand.ExecuteAsync(dialog.FileName).ConfigureAwait(true);
         }
     }
 
@@ -126,8 +120,6 @@ public partial class ModSnapshotsWindow : Window
             ShowError(exception.Message);
         }
     }
-
-    private void Cancel_Click(object sender, RoutedEventArgs e) => viewModel.Cancel();
 
     protected override void OnClosing(CancelEventArgs e)
     {

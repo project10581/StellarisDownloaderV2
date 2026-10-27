@@ -94,15 +94,15 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <WrapPanel>
-            <Button Content="{DynamicResource Snapshots.SaveVersion}" IsEnabled="{Binding IsIdle}" Click="SaveVersion_Click" FontWeight="SemiBold" />
-            <Button Content="{DynamicResource Snapshots.RefreshHistory}" IsEnabled="{Binding IsIdle}" Click="RefreshHistory_Click" />
+            <Button Content="{DynamicResource Snapshots.SaveVersion}" IsEnabled="{Binding IsIdle}" Command="{Binding SaveVersionCommand}" FontWeight="SemiBold" />
+            <Button Content="{DynamicResource Snapshots.RefreshHistory}" IsEnabled="{Binding IsIdle}" Command="{Binding LoadHistoryCommand}" />
             <Menu Background="Transparent" IsEnabled="{Binding IsIdle}" Margin="0,0,8,8" VerticalAlignment="Center">
                 <MenuItem Header="{DynamicResource Snapshots.More}" Padding="12,6">
                     <MenuItem Header="{DynamicResource Snapshots.Export}" Click="Export_Click" />
                     <MenuItem Header="{DynamicResource Snapshots.CompareFiles}" Click="CompareFiles_Click" />
                 </MenuItem>
             </Menu>
-            <Button Content="{DynamicResource Updates.Cancel}" IsEnabled="{Binding IsBusy}" Click="Cancel_Click" />
+            <Button Content="{DynamicResource Updates.Cancel}" IsEnabled="{Binding IsBusy}" Command="{Binding CancelCommand}" />
         </WrapPanel>
         <StackPanel Grid.Row="1" Margin="0,0,0,12">
             <TextBlock Text="{DynamicResource Snapshots.HistoryNote}" TextWrapping="Wrap" />

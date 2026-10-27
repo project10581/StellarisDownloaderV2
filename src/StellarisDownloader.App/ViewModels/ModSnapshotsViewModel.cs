@@ -3,121 +3,100 @@ using System.IO;
 using System.Security;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
 using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class ModSnapshotsViewModel(
+public sealed partial class ModSnapshotsViewModel(
     IModSnapshotService snapshotService,
     ModSnapshotHistory history,
     Func<string, string> text) : ObservableObject
 {
     private CancellationTokenSource? operationCancellation;
-    private bool isBusy;
-    private string? lastError;
-    private string? statusMessage;
-    private string baselineSummary = string.Empty;
-    private string currentSummary = string.Empty;
-    private string warnings = string.Empty;
-    private ModSnapshotComparison? comparison;
-    private SnapshotSourceViewModel? selectedBaselineVersion;
-    private string historyWarning = string.Empty;
     private bool hasLoadedHistory;
     private ModSnapshot? liveSnapshot;
-    private bool isFileComparison;
 
-    public bool IsFileComparison { get => isFileComparison; private set => SetProperty(ref isFileComparison, value); }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CurrentSourceLabel))]
+    public partial bool IsFileComparison { get; private set; }
 
     public string CurrentSourceLabel => IsFileComparison ? text("Snapshots.FileComparison") : text("Snapshots.LiveLibrary");
 
-    public bool IsBusy
-    {
-        get => isBusy;
-        private set
-        {
-            if (SetProperty(ref isBusy, value))
-            {
-                OnPropertyChanged(nameof(IsIdle));
-                OnPropertyChanged(nameof(CanExportReport));
-                OnPropertyChanged(nameof(CanCopyMissing));
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIdle), nameof(CanExportReport), nameof(CanCopyMissing))]
+    [NotifyCanExecuteChangedFor(nameof(LoadHistoryCommand), nameof(SaveVersionCommand), nameof(SelectBaselineCommand),
+        nameof(ExportReportCommand), nameof(CancelCommand))]
+    public partial bool IsBusy { get; private set; }
 
     public bool IsIdle => !IsBusy;
-
     public bool CanExportReport => IsIdle && Comparison is not null;
-
     public bool CanCopyMissing => CanExportReport && Missing.Count > 0;
-
     public string HistoryDirectory => history.DirectoryPath;
-
     public string DefaultExportDirectory => history.ExportsDirectory;
 
-    public string HistoryWarning { get => historyWarning; private set => SetProperty(ref historyWarning, value); }
+    [ObservableProperty]
+    public partial string HistoryWarning { get; private set; } = string.Empty;
 
-    public IReadOnlyList<SnapshotSourceViewModel> HistoryVersions { get; private set; } = [];
+    [ObservableProperty]
+    public partial IReadOnlyList<SnapshotSourceViewModel> HistoryVersions { get; private set; } = [];
 
-    public SnapshotSourceViewModel? SelectedBaselineVersion
+    [ObservableProperty]
+    public partial SnapshotSourceViewModel? SelectedBaselineVersion { get; set; }
+
+    partial void OnSelectedBaselineVersionChanged(SnapshotSourceViewModel? oldValue, SnapshotSourceViewModel? newValue)
     {
-        get => selectedBaselineVersion;
-        set
-        {
-            var previousPath = selectedBaselineVersion?.FilePath;
-            if (SetProperty(ref selectedBaselineVersion, value))
-            {
-                if (previousPath != value?.FilePath)
-                {
-                    ClearResults();
-                }
-            }
-        }
+        if (oldValue?.FilePath != newValue?.FilePath) { ClearResults(); }
     }
 
-    public string? LastError { get => lastError; private set => SetProperty(ref lastError, value); }
+    [ObservableProperty]
+    public partial string? LastError { get; private set; }
 
-    public string? StatusMessage { get => statusMessage; private set => SetProperty(ref statusMessage, value); }
+    [ObservableProperty]
+    public partial string? StatusMessage { get; private set; }
 
-    public string BaselineSummary { get => baselineSummary; private set => SetProperty(ref baselineSummary, value); }
+    [ObservableProperty]
+    public partial string BaselineSummary { get; private set; } = string.Empty;
 
-    public string CurrentSummary { get => currentSummary; private set => SetProperty(ref currentSummary, value); }
+    [ObservableProperty]
+    public partial string CurrentSummary { get; private set; } = string.Empty;
 
-    public string Warnings { get => warnings; private set => SetProperty(ref warnings, value); }
+    [ObservableProperty]
+    public partial string Warnings { get; private set; } = string.Empty;
 
-    public ModSnapshotComparison? Comparison
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanExportReport), nameof(CanCopyMissing))]
+    [NotifyCanExecuteChangedFor(nameof(ExportReportCommand))]
+    public partial ModSnapshotComparison? Comparison { get; private set; }
+
+    partial void OnComparisonChanged(ModSnapshotComparison? value)
     {
-        get => comparison;
-        private set
-        {
-            comparison = value;
-            Added = ToItems(value?.Added);
-            Missing = ToItems(value?.Missing);
-            Retained = ToItems(value?.Retained);
-            BaselineItems = BuildSide(value?.Baseline.Mods, value?.Missing, ModSnapshotChange.Missing);
-            CurrentItems = BuildSide(value?.Current.Mods, value?.Added, ModSnapshotChange.Added);
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(Added));
-            OnPropertyChanged(nameof(Missing));
-            OnPropertyChanged(nameof(Retained));
-            OnPropertyChanged(nameof(BaselineItems));
-            OnPropertyChanged(nameof(CurrentItems));
-            OnPropertyChanged(nameof(CanExportReport));
-            OnPropertyChanged(nameof(CanCopyMissing));
-        }
+        Added = ToItems(value?.Added);
+        Missing = ToItems(value?.Missing);
+        Retained = ToItems(value?.Retained);
+        BaselineItems = BuildSide(value?.Baseline.Mods, value?.Missing, ModSnapshotChange.Missing);
+        CurrentItems = BuildSide(value?.Current.Mods, value?.Added, ModSnapshotChange.Added);
     }
 
-    public IReadOnlyList<ModSnapshotItemViewModel> Added { get; private set; } = [];
+    [ObservableProperty]
+    public partial IReadOnlyList<ModSnapshotItemViewModel> Added { get; private set; } = [];
 
-    public IReadOnlyList<ModSnapshotItemViewModel> Missing { get; private set; } = [];
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCopyMissing))]
+    public partial IReadOnlyList<ModSnapshotItemViewModel> Missing { get; private set; } = [];
 
-    public IReadOnlyList<ModSnapshotItemViewModel> Retained { get; private set; } = [];
+    [ObservableProperty]
+    public partial IReadOnlyList<ModSnapshotItemViewModel> Retained { get; private set; } = [];
 
-    public IReadOnlyList<ModSnapshotItemViewModel> BaselineItems { get; private set; } = [];
+    [ObservableProperty]
+    public partial IReadOnlyList<ModSnapshotItemViewModel> BaselineItems { get; private set; } = [];
 
-    public IReadOnlyList<ModSnapshotItemViewModel> CurrentItems { get; private set; } = [];
+    [ObservableProperty]
+    public partial IReadOnlyList<ModSnapshotItemViewModel> CurrentItems { get; private set; } = [];
 
+    [RelayCommand(CanExecute = nameof(IsIdle), AllowConcurrentExecutions = false)]
     public Task LoadHistoryAsync() => RunAsync(async token =>
     {
         ClearResults();
@@ -130,6 +109,7 @@ public sealed class ModSnapshotsViewModel(
 
     public Task InitializeAsync() => hasLoadedHistory ? Task.CompletedTask : LoadHistoryAsync();
 
+    [RelayCommand(CanExecute = nameof(IsIdle), AllowConcurrentExecutions = false)]
     public Task SaveVersionAsync() => RunAsync(async token =>
     {
         var snapshot = await snapshotService.CaptureAsync(token);
@@ -141,6 +121,7 @@ public sealed class ModSnapshotsViewModel(
         StatusMessage = Format("Snapshots.VersionSaved", path);
     });
 
+    [RelayCommand(CanExecute = nameof(IsIdle), AllowConcurrentExecutions = false)]
     public Task SelectBaselineAsync(SnapshotSourceViewModel? baseline) => RunAsync(async token =>
     {
         SelectedBaselineVersion = baseline;
@@ -151,7 +132,6 @@ public sealed class ModSnapshotsViewModel(
     private async Task ShowLiveComparisonAsync(CancellationToken token)
     {
         IsFileComparison = false;
-        OnPropertyChanged(nameof(CurrentSourceLabel));
         ClearResults();
         if (liveSnapshot is null)
         {
@@ -159,7 +139,6 @@ public sealed class ModSnapshotsViewModel(
         }
 
         CurrentItems = BuildSide(liveSnapshot.Mods, null, ModSnapshotChange.Unchanged);
-        OnPropertyChanged(nameof(CurrentItems));
         CurrentSummary = Describe(liveSnapshot);
         Warnings = DescribeWarnings(liveSnapshot);
         StatusMessage = text("Snapshots.FirstSaveHint");
@@ -196,7 +175,6 @@ public sealed class ModSnapshotsViewModel(
         var current = await snapshotService.CaptureAsync(token);
         liveSnapshot = current;
         IsFileComparison = false;
-        OnPropertyChanged(nameof(CurrentSourceLabel));
         ShowComparison(baseline, current);
     });
 
@@ -205,12 +183,12 @@ public sealed class ModSnapshotsViewModel(
         SelectedBaselineVersion = HistoryVersions.FirstOrDefault(item => item.FilePath == baselinePath);
         ClearResults();
         IsFileComparison = true;
-        OnPropertyChanged(nameof(CurrentSourceLabel));
         var baseline = await ReadSnapshotAsync(baselinePath, token);
         var current = await ReadSnapshotAsync(currentPath, token);
         ShowComparison(baseline, current);
     });
 
+    [RelayCommand(CanExecute = nameof(CanExportReport), AllowConcurrentExecutions = false)]
     public Task ExportReportAsync(string path) => RunAsync(async token =>
     {
         RejectManagedVersionOverwrite(path);
@@ -236,6 +214,7 @@ public sealed class ModSnapshotsViewModel(
 
     public string GetMissingIds() => string.Join(Environment.NewLine, Missing.Select(mod => mod.WorkshopId));
 
+    [RelayCommand(CanExecute = nameof(IsBusy))]
     public void Cancel() => operationCancellation?.Cancel();
 
     private async Task RefreshHistoryAsync(CancellationToken cancellationToken)
@@ -250,7 +229,6 @@ public sealed class ModSnapshotsViewModel(
                 Format("Snapshots.VersionLabel", entry.CapturedAtUtc.ToLocalTime(), entry.ModCount, shortVersion),
                 entry.SourceLibrary);
         }).ToArray();
-        OnPropertyChanged(nameof(HistoryVersions));
         SelectedBaselineVersion = HistoryVersions.FirstOrDefault(item => item.FilePath == previousBaseline)
             ?? (HistoryVersions.Count > 0 ? HistoryVersions[0] : null);
         HistoryWarning = result.UnreadableCount == 0 ? string.Empty : Format("Snapshots.UnreadableHistory", result.UnreadableCount);
@@ -310,7 +288,8 @@ public sealed class ModSnapshotsViewModel(
 
     private void ClearResults()
     {
-        Comparison = null;
+        if (Comparison is null) { OnComparisonChanged(null); }
+        else { Comparison = null; }
         BaselineSummary = string.Empty;
         CurrentSummary = string.Empty;
         Warnings = string.Empty;
