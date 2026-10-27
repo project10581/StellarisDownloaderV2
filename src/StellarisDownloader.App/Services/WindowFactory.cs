@@ -17,7 +17,7 @@ internal sealed class WindowFactory(IServiceProvider services, Application appli
         new(new SettingsViewModel(
             services.GetRequiredService<ISettingsStore>(), services.GetRequiredService<ILibraryService>(),
             services.GetRequiredService<ILocalizationService>(), services.GetRequiredService<WriteOperationCoordinator>(),
-            settings.Settings, isInitialization, settings.CorruptBackupPath));
+            settings.Settings, isInitialization, settings.CorruptBackupPath, services.GetRequiredService<IDialogService>()));
 
     private async Task<SettingsWindow> CreateRegularSettingsWindowAsync() =>
         CreateSettingsWindow(await services.GetRequiredService<ISettingsStore>().LoadAsync(), isInitialization: false);

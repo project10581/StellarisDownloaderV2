@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using Microsoft.Win32;
 using StellarisDownloader.App.ViewModels;
+using StellarisDownloader.Core.Models;
 
 namespace StellarisDownloader.App;
 
@@ -16,6 +17,8 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         this.viewModel = viewModel;
         DataContext = viewModel;
+        viewModel.Saved += OnSaved;
+        viewModel.Cancelled += OnCancelled;
         SetResourceReference(
             TitleProperty,
             viewModel.IsInitialization ? "Settings.InitializationTitle" : "Settings.Title");
@@ -23,6 +26,8 @@ public partial class SettingsWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        viewModel.Saved -= OnSaved;
+        viewModel.Cancelled -= OnCancelled;
         viewModel.Dispose();
         base.OnClosed(e);
     }
@@ -45,31 +50,8 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private async void SaveButton_Click(object sender, RoutedEventArgs e)
+    private void OnSaved(SettingsSaveResult result)
     {
-        var confirmation = MessageBox.Show(
-            this,
-            GetString("Settings.ConfirmMessage"),
-            GetString("Settings.ConfirmTitle"),
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (confirmation != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        var result = await viewModel.SaveAsync().ConfigureAwait(true);
-        if (!result.Succeeded)
-        {
-            MessageBox.Show(
-                this,
-                result.Error ?? GetString("Settings.SaveFailed"),
-                GetString("Settings.ErrorTitle"),
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-            return;
-        }
-
         if (result.RequiresScanRetry)
         {
             MessageBox.Show(
@@ -100,11 +82,7 @@ public partial class SettingsWindow : Window
         DialogResult = true;
     }
 
-    private void CancelButton_Click(object sender, RoutedEventArgs e)
-    {
-        viewModel.Cancel();
-        DialogResult = false;
-    }
+    private void OnCancelled() => DialogResult = false;
 
     private string GetString(string key) => TryFindResource(key) as string ?? key;
 }

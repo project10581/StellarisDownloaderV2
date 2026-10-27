@@ -1,5 +1,7 @@
 using System.IO;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Microsoft.Data.Sqlite;
 using StellarisDownloader.App.Services;
 using StellarisDownloader.Core.Models;
@@ -7,21 +9,16 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class SettingsViewModel : ObservableObject, IDisposable
+public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 {
     private readonly ISettingsStore settingsStore;
     private readonly ILibraryService libraryService;
     private readonly ILocalizationService localizationService;
     private readonly WriteOperationCoordinator writeCoordinator;
     private AppSettings committedSettings;
-    private string libraryRoot;
-    private string selectedLanguage;
-    private bool refreshLibraryOnStartup;
-    private bool checkModUpdatesOnStartup;
-    private bool checkAppUpdatesOnStartup;
-    private bool isBusy;
+    private readonly IDialogService dialogs;
+    private readonly Func<string, string> text;
     private bool disposed;
-    private string? errorMessage;
 
     public SettingsViewModel(
         ISettingsStore settingsStore,
@@ -30,7 +27,9 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         WriteOperationCoordinator writeCoordinator,
         AppSettings settings,
         bool isInitialization,
-        string? corruptBackupPath = null)
+        string? corruptBackupPath = null,
+        IDialogService? dialogs = null,
+        Func<string, string>? text = null)
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(libraryService);
@@ -43,11 +42,13 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         this.localizationService = localizationService;
         this.writeCoordinator = writeCoordinator;
         committedSettings = settings;
-        libraryRoot = settings.LibraryRoot ?? string.Empty;
-        selectedLanguage = settings.Language;
-        refreshLibraryOnStartup = settings.RefreshLibraryOnStartup;
-        checkModUpdatesOnStartup = settings.CheckModUpdatesOnStartup;
-        checkAppUpdatesOnStartup = settings.CheckAppUpdatesOnStartup;
+        this.dialogs = dialogs ?? new DialogService();
+        this.text = text ?? (key => Application.Current?.TryFindResource(key) as string ?? key);
+        LibraryRoot = settings.LibraryRoot ?? string.Empty;
+        SelectedLanguage = settings.Language;
+        RefreshLibraryOnStartup = settings.RefreshLibraryOnStartup;
+        CheckModUpdatesOnStartup = settings.CheckModUpdatesOnStartup;
+        CheckAppUpdatesOnStartup = settings.CheckAppUpdatesOnStartup;
         IsInitialization = isInitialization;
         CorruptBackupPath = corruptBackupPath;
     }
@@ -58,52 +59,54 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     public string? CorruptBackupPath { get; }
 
-    public string LibraryRoot
+    public event Action<SettingsSaveResult>? Saved;
+    public event Action? Cancelled;
+
+    [ObservableProperty]
+    public partial string LibraryRoot { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string SelectedLanguage { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool RefreshLibraryOnStartup { get; set; }
+
+    [ObservableProperty]
+    public partial bool CheckModUpdatesOnStartup { get; set; }
+
+    [ObservableProperty]
+    public partial bool CheckAppUpdatesOnStartup { get; set; }
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand), nameof(CancelChangesCommand))]
+    public partial bool IsBusy { get; private set; }
+
+    [ObservableProperty]
+    public partial string? ErrorMessage { get; private set; }
+
+    partial void OnLibraryRootChanged(string value)
     {
-        get => libraryRoot;
-        set => SetProperty(ref libraryRoot, value ?? string.Empty);
+        if (value is null) { LibraryRoot = string.Empty; }
     }
 
-    public string SelectedLanguage
+    partial void OnSelectedLanguageChanged(string value) => localizationService.SetLanguage(value);
+
+    private bool IsIdle => !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(IsIdle), AllowConcurrentExecutions = false)]
+    private async Task Save()
     {
-        get => selectedLanguage;
-        set
-        {
-            if (SetProperty(ref selectedLanguage, value))
-            {
-                localizationService.SetLanguage(value);
-            }
-        }
+        if (!dialogs.Confirm(text("Settings.ConfirmMessage"), text("Settings.ConfirmTitle"))) { return; }
+        var result = await SaveAsync();
+        if (result.Succeeded) { Saved?.Invoke(result); }
+        else { dialogs.ShowError(result.Error ?? text("Settings.SaveFailed"), text("Settings.ErrorTitle")); }
     }
 
-    public bool RefreshLibraryOnStartup
+    [RelayCommand(CanExecute = nameof(IsIdle))]
+    private void CancelChanges()
     {
-        get => refreshLibraryOnStartup;
-        set => SetProperty(ref refreshLibraryOnStartup, value);
-    }
-
-    public bool CheckModUpdatesOnStartup
-    {
-        get => checkModUpdatesOnStartup;
-        set => SetProperty(ref checkModUpdatesOnStartup, value);
-    }
-
-    public bool CheckAppUpdatesOnStartup
-    {
-        get => checkAppUpdatesOnStartup;
-        set => SetProperty(ref checkAppUpdatesOnStartup, value);
-    }
-
-    public bool IsBusy
-    {
-        get => isBusy;
-        private set => SetProperty(ref isBusy, value);
-    }
-
-    public string? ErrorMessage
-    {
-        get => errorMessage;
-        private set => SetProperty(ref errorMessage, value);
+        Cancel();
+        Cancelled?.Invoke();
     }
 
     public async Task<SettingsSaveResult> SaveAsync(CancellationToken cancellationToken = default)
@@ -141,14 +144,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                         return true;
                     },
                     cancellationToken);
-                Commit(proposedSettings);
-                return new SettingsSaveResult(
-                    Succeeded: true,
-                    SettingsCommitted: true,
-                    RequiresScanRetry: false,
-                    RequiresManualRepair: false,
-                    Summary: null,
-                    Error: null);
+                return Commit(proposedSettings);
             }
 
             var switchResult = await libraryService.SwitchAsync(
@@ -156,7 +152,6 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                 cancellationToken: cancellationToken);
             if (switchResult.Status == OperationStatus.Succeeded)
             {
-                Commit(proposedSettings with { LibraryRoot = switchResult.RequestedLibraryRoot });
                 var scan = switchResult.ScanResult;
                 var summary = scan is null
                     ? null
@@ -165,26 +160,14 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
                         scan.RemovedWorkshopIds.Count,
                         scan.EmptyWorkshopIds.Count,
                         scan.IgnoredDirectoryCount);
-                return new SettingsSaveResult(
-                    Succeeded: true,
-                    SettingsCommitted: true,
-                    RequiresScanRetry: false,
-                    RequiresManualRepair: false,
-                    Summary: summary,
-                    Error: null);
+                return Commit(proposedSettings with { LibraryRoot = switchResult.RequestedLibraryRoot }, summary);
             }
 
             if (switchResult.SettingsCommitted)
             {
-                Commit(proposedSettings with { LibraryRoot = switchResult.RequestedLibraryRoot });
-                ErrorMessage = switchResult.Error;
-                return new SettingsSaveResult(
-                    Succeeded: true,
-                    SettingsCommitted: true,
-                    RequiresScanRetry: switchResult.CanRetryScan,
-                    RequiresManualRepair: switchResult.RequiresManualRepair,
-                    Summary: null,
-                    Error: switchResult.Error);
+                return Commit(proposedSettings with { LibraryRoot = switchResult.RequestedLibraryRoot },
+                    error: switchResult.Error, requiresScanRetry: switchResult.CanRetryScan,
+                    requiresManualRepair: switchResult.RequiresManualRepair);
             }
 
             return SetFailure(
@@ -222,11 +205,14 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private void Commit(AppSettings settings)
+    private SettingsSaveResult Commit(AppSettings settings, LibrarySwitchSummary? summary = null,
+        string? error = null, bool requiresScanRetry = false, bool requiresManualRepair = false)
     {
         committedSettings = settings;
         LibraryRoot = settings.LibraryRoot ?? string.Empty;
-        ErrorMessage = null;
+        ErrorMessage = error;
+        return new SettingsSaveResult(Succeeded: true, SettingsCommitted: true,
+            requiresScanRetry, requiresManualRepair, summary, error);
     }
 
     private SettingsSaveResult SetFailure(string error, bool requiresManualRepair = false)

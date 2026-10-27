@@ -121,12 +121,12 @@
                     Margin="0,0,8,0"
                     Padding="12,6"
                     Content="{DynamicResource Settings.Cancel}"
-                    Click="CancelButton_Click" />
+                    Command="{Binding CancelChangesCommand}" />
             <Button MinWidth="90"
                     Padding="12,6"
                     IsDefault="True"
                     Content="{DynamicResource Settings.Save}"
-                    Click="SaveButton_Click" />
+                    Command="{Binding SaveCommand}" />
         </StackPanel>
     </Grid>
 </Window>

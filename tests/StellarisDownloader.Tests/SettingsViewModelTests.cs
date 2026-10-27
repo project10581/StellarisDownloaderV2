@@ -6,6 +6,30 @@ namespace StellarisDownloader.Tests;
 
 public sealed class SettingsViewModelTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SaveCommandWritesOnlyAfterConfirmation(bool confirmed)
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var root = temporaryDirectory.GetPath("library");
+        var store = new StubSettingsStore(new AppSettings { LibraryRoot = root });
+        var library = new StubLibraryService { ValidationResult = new LibraryValidationResult(true, root, null) };
+        var dialogs = new StubDialogService(confirmed);
+        using var coordinator = new WriteOperationCoordinator();
+        using var viewModel = new SettingsViewModel(store, library, new StubLocalizationService(),
+            coordinator, store.Settings, isInitialization: false, dialogs: dialogs);
+        var saved = false;
+        viewModel.Saved += _ => saved = true;
+
+        await viewModel.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, dialogs.ConfirmationCount);
+        Assert.Equal(confirmed ? 1 : 0, store.SaveCount);
+        Assert.Equal(confirmed, saved);
+        Assert.Empty(dialogs.Errors);
+    }
+
     [Fact]
     public async Task UnchangedRootSavesTheCompleteSettingsObjectExactlyOnce()
     {
