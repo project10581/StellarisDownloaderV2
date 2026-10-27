@@ -3,13 +3,8 @@ using StellarisDownloader.Core.Models;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class DownloadQueueItemViewModel : ObservableObject
+public sealed partial class DownloadQueueItemViewModel : ObservableObject
 {
-    private string? title;
-    private DownloadQueueItemStatus status = DownloadQueueItemStatus.Pending;
-    private string? error;
-    private string? metadataError;
-
     public DownloadQueueItemViewModel(string workshopId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workshopId);
@@ -18,43 +13,21 @@ public sealed class DownloadQueueItemViewModel : ObservableObject
 
     public string WorkshopId { get; }
 
-    public string? Title
-    {
-        get => title;
-        private set
-        {
-            if (SetProperty(ref title, value))
-            {
-                OnPropertyChanged(nameof(DisplayTitle));
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayTitle))]
+    public partial string? Title { get; private set; }
 
     public string DisplayTitle => string.IsNullOrWhiteSpace(Title) ? WorkshopId : Title;
 
-    public DownloadQueueItemStatus Status
-    {
-        get => status;
-        private set
-        {
-            if (SetProperty(ref status, value))
-            {
-                OnPropertyChanged(nameof(IsTerminal));
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTerminal))]
+    public partial DownloadQueueItemStatus Status { get; private set; } = DownloadQueueItemStatus.Pending;
 
-    public string? Error
-    {
-        get => error;
-        private set => SetProperty(ref error, value);
-    }
+    [ObservableProperty]
+    public partial string? Error { get; private set; }
 
-    public string? MetadataError
-    {
-        get => metadataError;
-        private set => SetProperty(ref metadataError, value);
-    }
+    [ObservableProperty]
+    public partial string? MetadataError { get; private set; }
 
     public bool IsTerminal => Status is DownloadQueueItemStatus.Succeeded
         or DownloadQueueItemStatus.Failed
