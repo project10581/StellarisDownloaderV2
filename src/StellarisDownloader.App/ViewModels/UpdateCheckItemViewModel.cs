@@ -3,12 +3,9 @@ using StellarisDownloader.Core.Models;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class UpdateCheckItemViewModel : ObservableObject
+public sealed partial class UpdateCheckItemViewModel : ObservableObject
 {
     private bool isSelected;
-    private bool selectionEnabled = true;
-    private OperationStatus? lastOperationStatus;
-    private string? lastOperationError;
 
     public UpdateCheckItemViewModel(UpdateCheckResult result)
     {
@@ -42,7 +39,11 @@ public sealed class UpdateCheckItemViewModel : ObservableObject
 
     public bool IsSelectable => State == UpdateState.UpdateAvailable;
 
-    public bool IsSelectionEnabled => selectionEnabled && IsSelectable;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSelectionEnabled))]
+    public partial bool SelectionEnabled { get; private set; } = true;
+
+    public bool IsSelectionEnabled => SelectionEnabled && IsSelectable;
 
     public bool IsSelected
     {
@@ -51,6 +52,7 @@ public sealed class UpdateCheckItemViewModel : ObservableObject
         {
             if (!IsSelectionEnabled)
             {
+                OnPropertyChanged(nameof(IsSelected));
                 return;
             }
 
@@ -58,25 +60,13 @@ public sealed class UpdateCheckItemViewModel : ObservableObject
         }
     }
 
-    public OperationStatus? LastOperationStatus
-    {
-        get => lastOperationStatus;
-        private set => SetProperty(ref lastOperationStatus, value);
-    }
+    [ObservableProperty]
+    public partial OperationStatus? LastOperationStatus { get; private set; }
 
-    public string? LastOperationError
-    {
-        get => lastOperationError;
-        private set => SetProperty(ref lastOperationError, value);
-    }
+    [ObservableProperty]
+    public partial string? LastOperationError { get; private set; }
 
-    internal void SetSelectionEnabled(bool value)
-    {
-        if (SetProperty(ref selectionEnabled, value))
-        {
-            OnPropertyChanged(nameof(IsSelectionEnabled));
-        }
-    }
+    internal void SetSelectionEnabled(bool value) => SelectionEnabled = value;
 
     internal void SetSelected(bool value) => SetProperty(ref isSelected, value, nameof(IsSelected));
 
