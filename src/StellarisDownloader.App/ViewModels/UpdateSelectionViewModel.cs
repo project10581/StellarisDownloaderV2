@@ -1,9 +1,5 @@
-using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.IO;
-using System.Net.Http;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisDownloader.Core.Models;
@@ -11,182 +7,91 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
+public sealed partial class UpdateSelectionViewModel : ObservableObject, IDisposable
 {
     private const string EmptyResultMessage =
         "No mod records are available for update checks. The cache may be empty, stale, "
         + "or belong to a different library root.";
     private readonly ISettingsStore settingsStore;
     private readonly IModOperationService modOperationService;
-    private readonly SynchronizationContext uiContext;
-    private readonly int uiThreadId;
     private readonly ObservableCollection<UpdateCheckItemViewModel> items = [];
-    private readonly AsyncRelayCommand checkUpdatesCommand;
-    private readonly AsyncRelayCommand updateSelectedCommand;
-    private readonly RelayCommand selectAllAvailableCommand;
-    private readonly RelayCommand cancelCommand;
     private CancellationTokenSource? activeCancellation;
     private string? currentLibraryRoot;
-    private bool isBusy;
-    private string? currentStage;
-    private int progressCompleted;
-    private int progressTotal;
-    private string? currentWorkshopId;
-    private string? progressMessage;
-    private string? statusMessage;
-    private string? lastError;
-    private int succeededCount;
-    private int failedCount;
-    private int cancelledCount;
     private bool disposed;
 
-    public UpdateSelectionViewModel(
-        ISettingsStore settingsStore,
-        IModOperationService modOperationService,
-        SynchronizationContext? uiContext = null)
+    public UpdateSelectionViewModel(ISettingsStore settingsStore, IModOperationService modOperationService)
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(modOperationService);
-
         this.settingsStore = settingsStore;
         this.modOperationService = modOperationService;
-        this.uiContext = uiContext
-            ?? SynchronizationContext.Current
-            ?? new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher);
-        uiThreadId = Environment.CurrentManagedThreadId;
-
         Items = new ReadOnlyObservableCollection<UpdateCheckItemViewModel>(items);
-        checkUpdatesCommand = new AsyncRelayCommand(
-            () => CheckUpdatesAsync(CancellationToken.None),
-            () => CanCheckUpdates);
-        updateSelectedCommand = new AsyncRelayCommand(
-            () => UpdateSelectedAsync(CancellationToken.None),
-            () => CanUpdateSelected);
-        selectAllAvailableCommand = new RelayCommand(
-            SelectAllAvailable,
-            () => CanSelectAllAvailable);
-        cancelCommand = new RelayCommand(Cancel, () => CanCancel);
     }
 
     public ReadOnlyObservableCollection<UpdateCheckItemViewModel> Items { get; }
 
-    public IAsyncRelayCommand CheckUpdatesCommand => checkUpdatesCommand;
-
-    public IAsyncRelayCommand UpdateSelectedCommand => updateSelectedCommand;
-
-    public IRelayCommand SelectAllAvailableCommand => selectAllAvailableCommand;
-
-    public IRelayCommand CancelCommand => cancelCommand;
-
-    public bool IsBusy
-    {
-        get => isBusy;
-        private set
-        {
-            if (SetProperty(ref isBusy, value))
-            {
-                OnPropertyChanged(nameof(CanCheckUpdates));
-                OnPropertyChanged(nameof(CanUpdateSelected));
-                OnPropertyChanged(nameof(CanSelectAllAvailable));
-                OnPropertyChanged(nameof(CanCancel));
-                NotifyCommandStates();
-            }
-        }
-    }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCheckUpdates), nameof(CanUpdateSelected),
+        nameof(CanSelectAllAvailable), nameof(CanCancel))]
+    [NotifyCanExecuteChangedFor(nameof(CheckUpdatesCommand), nameof(UpdateSelectedCommand),
+        nameof(SelectAllAvailableCommand), nameof(CancelCommand))]
+    public partial bool IsBusy { get; private set; }
 
     public bool CanCheckUpdates => !IsBusy;
-
-    public bool CanUpdateSelected => !IsBusy
-        && currentLibraryRoot is not null
+    public bool CanUpdateSelected => !IsBusy && currentLibraryRoot is not null
         && items.Any(item => item.IsSelected && item.IsSelectable);
-
-    public bool CanSelectAllAvailable => !IsBusy
-        && items.Any(item => item.IsSelectable && !item.IsSelected);
-
-    public bool CanCancel => IsBusy
-        && activeCancellation is not null
-        && !activeCancellation.IsCancellationRequested;
-
+    public bool CanSelectAllAvailable => !IsBusy && items.Any(item => item.IsSelectable && !item.IsSelected);
+    public bool CanCancel => IsBusy && activeCancellation is { IsCancellationRequested: false };
     public int SelectedCount => items.Count(item => item.IsSelected && item.IsSelectable);
 
-    public string? CurrentStage
-    {
-        get => currentStage;
-        private set => SetProperty(ref currentStage, value);
-    }
+    [ObservableProperty]
+    public partial string? CurrentStage { get; private set; }
 
-    public int ProgressCompleted
-    {
-        get => progressCompleted;
-        private set => SetProperty(ref progressCompleted, value);
-    }
+    [ObservableProperty]
+    public partial int ProgressCompleted { get; private set; }
 
-    public int ProgressTotal
-    {
-        get => progressTotal;
-        private set => SetProperty(ref progressTotal, value);
-    }
+    [ObservableProperty]
+    public partial int ProgressTotal { get; private set; }
 
-    public string? CurrentWorkshopId
-    {
-        get => currentWorkshopId;
-        private set => SetProperty(ref currentWorkshopId, value);
-    }
+    [ObservableProperty]
+    public partial string? CurrentWorkshopId { get; private set; }
 
-    public string? ProgressMessage
-    {
-        get => progressMessage;
-        private set => SetProperty(ref progressMessage, value);
-    }
+    [ObservableProperty]
+    public partial string? ProgressMessage { get; private set; }
 
-    public string? StatusMessage
-    {
-        get => statusMessage;
-        private set => SetProperty(ref statusMessage, value);
-    }
+    [ObservableProperty]
+    public partial string? StatusMessage { get; private set; }
 
-    public string? LastError
-    {
-        get => lastError;
-        private set => SetProperty(ref lastError, value);
-    }
+    [ObservableProperty]
+    public partial string? LastError { get; private set; }
 
-    public int SucceededCount
-    {
-        get => succeededCount;
-        private set => SetProperty(ref succeededCount, value);
-    }
+    [ObservableProperty]
+    public partial int SucceededCount { get; private set; }
 
-    public int FailedCount
-    {
-        get => failedCount;
-        private set => SetProperty(ref failedCount, value);
-    }
+    [ObservableProperty]
+    public partial int FailedCount { get; private set; }
 
-    public int CancelledCount
-    {
-        get => cancelledCount;
-        private set => SetProperty(ref cancelledCount, value);
-    }
+    [ObservableProperty]
+    public partial int CancelledCount { get; private set; }
 
+    [RelayCommand(CanExecute = nameof(CanCheckUpdates), AllowConcurrentExecutions = false)]
     public async Task CheckUpdatesAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var operation = await BeginCheckAsync(cancellationToken).ConfigureAwait(false);
+        var operation = BeginCheck(cancellationToken);
         if (operation is null)
         {
             return;
         }
 
-        var pendingProgress = new ConcurrentQueue<Task>();
-        var progress = CreateProgress(pendingProgress);
+        var progress = new Progress<OperationProgress>(ApplyProgress);
         try
         {
-            var loaded = await settingsStore.LoadAsync(operation.Token).ConfigureAwait(false);
+            var loaded = await settingsStore.LoadAsync(operation.Token);
             if (loaded.RequiresInitialization || string.IsNullOrWhiteSpace(loaded.Settings.LibraryRoot))
             {
-                await InvokeOnUiAsync(() => SetCheckFailure(
-                    "Choose a mod library folder before checking for updates.")).ConfigureAwait(false);
+                SetCheckFailure(
+                    "Choose a mod library folder before checking for updates.");
                 return;
             }
 
@@ -194,33 +99,31 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
             var results = await modOperationService.CheckUpdatesAsync(
                 libraryRoot,
                 progress,
-                operation.Token).ConfigureAwait(false);
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await InvokeOnUiAsync(() => ApplyCheckResults(libraryRoot, results)).ConfigureAwait(false);
+                operation.Token);
+            await Task.Yield();
+            ApplyCheckResults(libraryRoot, results);
         }
         catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
-            await InvokeOnUiAsync(() =>
-            {
-                CurrentStage = "Cancelled";
-                StatusMessage = "The update check was cancelled.";
-            }).ConfigureAwait(false);
+            await Task.Yield();
+            CurrentStage = "Cancelled";
+            StatusMessage = "The update check was cancelled.";
         }
         catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
-            await InvokeOnUiAsync(() => SetCheckFailure(exception.Message)).ConfigureAwait(false);
+            await Task.Yield();
+            SetCheckFailure(exception.Message);
         }
         finally
         {
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await FinishOperationAsync(operation).ConfigureAwait(false);
+            FinishOperation(operation);
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanSelectAllAvailable))]
     public void SelectAllAvailable()
     {
         ThrowIfDisposed();
-        VerifyUiThread();
         if (IsBusy)
         {
             return;
@@ -232,47 +135,49 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanUpdateSelected), AllowConcurrentExecutions = false)]
     public async Task UpdateSelectedAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var operation = await BeginUpdateAsync(cancellationToken).ConfigureAwait(false);
+        var operation = BeginUpdate(cancellationToken);
         if (operation is null)
         {
             return;
         }
 
-        var pendingProgress = new ConcurrentQueue<Task>();
-        var progress = CreateProgress(pendingProgress);
+        var progress = new Progress<OperationProgress>(ApplyProgress);
         try
         {
             var result = await modOperationService.UpdateSelectedAsync(
                 operation.LibraryRoot,
                 operation.WorkshopIds,
                 progress,
-                operation.Token).ConfigureAwait(false);
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await InvokeOnUiAsync(() => ApplyUpdateResults(
+                operation.Token);
+            await Task.Yield();
+            ApplyUpdateResults(
                 operation.WorkshopIds,
                 result,
-                operation.IsCancellationRequested)).ConfigureAwait(false);
+                operation.IsCancellationRequested);
         }
         catch (OperationCanceledException exception) when (!OperationalFailure.IsTimeout(exception, cancellationToken))
         {
-            await InvokeOnUiAsync(() => ApplyCancelledUpdate(operation.WorkshopIds)).ConfigureAwait(false);
+            await Task.Yield();
+            ApplyCancelledUpdate(operation.WorkshopIds);
         }
         catch (Exception exception) when (OperationalFailure.IsRecoverable(exception, cancellationToken))
         {
-            await InvokeOnUiAsync(() => ApplyFailedUpdate(
+            await Task.Yield();
+            ApplyFailedUpdate(
                 operation.WorkshopIds,
-                exception.Message)).ConfigureAwait(false);
+                exception.Message);
         }
         finally
         {
-            await DrainProgressAsync(pendingProgress).ConfigureAwait(false);
-            await FinishOperationAsync(operation).ConfigureAwait(false);
+            FinishOperation(operation);
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanCancel))]
     public void Cancel()
     {
         ThrowIfDisposed();
@@ -283,11 +188,9 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
         }
 
         cancellation.Cancel();
-        _ = InvokeOnUiAsync(() =>
-        {
-            StatusMessage = "Cancellation requested.";
-            cancelCommand.NotifyCanExecuteChanged();
-        });
+        StatusMessage = "Cancellation requested.";
+        OnPropertyChanged(nameof(CanCancel));
+        CancelCommand.NotifyCanExecuteChanged();
     }
 
     public void Dispose()
@@ -309,90 +212,45 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private async Task<UpdateOperation?> BeginCheckAsync(CancellationToken cancellationToken)
+    private UpdateOperation? BeginCheck(CancellationToken cancellationToken)
     {
+        if (IsBusy) { return null; }
         var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var started = await InvokeOnUiAsync(() =>
-        {
-            if (IsBusy)
-            {
-                return false;
-            }
-
-            activeCancellation = source;
-            IsBusy = true;
-            SetItemsSelectionEnabled(false);
-            ReplaceItems([]);
-            currentLibraryRoot = null;
-            ResetOperationState("CheckingModUpdates", "Checking installed mods for updates.");
-            return true;
-        }).ConfigureAwait(false);
-        if (!started)
-        {
-            source.Dispose();
-            return null;
-        }
-
+        activeCancellation = source;
+        IsBusy = true;
+        SetItemsSelectionEnabled(false);
+        ReplaceItems([]);
+        currentLibraryRoot = null;
+        ResetOperationState("CheckingModUpdates", "Checking installed mods for updates.");
         return new UpdateOperation(source, null, []);
     }
 
-    private async Task<UpdateOperation?> BeginUpdateAsync(CancellationToken cancellationToken)
+    private UpdateOperation? BeginUpdate(CancellationToken cancellationToken)
     {
+        if (IsBusy || currentLibraryRoot is null) { return null; }
+        var workshopIds = items.Where(item => item.IsSelected && item.IsSelectable)
+            .Select(item => item.WorkshopId).Distinct(StringComparer.Ordinal).ToArray();
+        if (workshopIds.Length == 0) { return null; }
         var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var operation = await InvokeOnUiAsync(() =>
+        activeCancellation = source;
+        IsBusy = true;
+        SetItemsSelectionEnabled(false);
+        foreach (var item in items.Where(item => workshopIds.Contains(item.WorkshopId, StringComparer.Ordinal)))
         {
-            if (IsBusy || currentLibraryRoot is null)
-            {
-                return null;
-            }
-
-            var workshopIds = items
-                .Where(item => item.IsSelected && item.IsSelectable)
-                .Select(item => item.WorkshopId)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-            if (workshopIds.Length == 0)
-            {
-                return null;
-            }
-
-            activeCancellation = source;
-            IsBusy = true;
-            SetItemsSelectionEnabled(false);
-            foreach (var item in items.Where(item => workshopIds.Contains(
-                item.WorkshopId,
-                StringComparer.Ordinal)))
-            {
-                item.ResetOperationResult();
-            }
-
-            ResetOperationState(
-                "UpdatingSelectedMods",
-                $"Updating {workshopIds.Length} selected mod(s).");
-            ProgressTotal = workshopIds.Length;
-            return new UpdateOperation(source, currentLibraryRoot, workshopIds);
-        }).ConfigureAwait(false);
-        if (operation is null)
-        {
-            source.Dispose();
+            item.ResetOperationResult();
         }
 
-        return operation;
+        ResetOperationState("UpdatingSelectedMods", $"Updating {workshopIds.Length} selected mod(s).");
+        ProgressTotal = workshopIds.Length;
+        return new UpdateOperation(source, currentLibraryRoot, workshopIds);
     }
 
-    private async Task FinishOperationAsync(UpdateOperation operation)
+    private void FinishOperation(UpdateOperation operation)
     {
-        await InvokeOnUiAsync(() =>
-        {
-            if (ReferenceEquals(activeCancellation, operation.Source))
-            {
-                activeCancellation = null;
-            }
-
-            SetItemsSelectionEnabled(true);
-            IsBusy = false;
-            NotifySelectionStateChanged();
-        }).ConfigureAwait(false);
+        activeCancellation = null;
+        SetItemsSelectionEnabled(true);
+        IsBusy = false;
+        NotifySelectionStateChanged();
         operation.Dispose();
     }
 
@@ -525,11 +383,6 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
         ProgressMessage = progress.Message;
     }
 
-    private CallbackProgress<OperationProgress> CreateProgress(
-        ConcurrentQueue<Task> pendingProgress) =>
-        new CallbackProgress<OperationProgress>(value =>
-            pendingProgress.Enqueue(InvokeOnUiAsync(() => ApplyProgress(value))));
-
     private void ResetOperationState(string stage, string message)
     {
         CurrentStage = stage;
@@ -582,80 +435,11 @@ public sealed class UpdateSelectionViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SelectedCount));
         OnPropertyChanged(nameof(CanUpdateSelected));
         OnPropertyChanged(nameof(CanSelectAllAvailable));
-        updateSelectedCommand.NotifyCanExecuteChanged();
-        selectAllAvailableCommand.NotifyCanExecuteChanged();
-    }
-
-    private void NotifyCommandStates()
-    {
-        checkUpdatesCommand.NotifyCanExecuteChanged();
-        updateSelectedCommand.NotifyCanExecuteChanged();
-        selectAllAvailableCommand.NotifyCanExecuteChanged();
-        cancelCommand.NotifyCanExecuteChanged();
-    }
-
-    private Task<bool> InvokeOnUiAsync(Action action) =>
-        InvokeOnUiAsync(() =>
-        {
-            action();
-            return true;
-        });
-
-    private Task<T> InvokeOnUiAsync<T>(Func<T> action)
-    {
-        if (Environment.CurrentManagedThreadId == uiThreadId)
-        {
-            return Task.FromResult(action());
-        }
-
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        uiContext.Post(
-            _ =>
-            {
-                try
-                {
-                    completion.SetResult(action());
-                }
-                catch (Exception exception)
-                {
-                    completion.SetException(exception);
-                }
-            },
-            null);
-        return completion.Task;
-    }
-
-    private static async Task DrainProgressAsync(ConcurrentQueue<Task> pendingProgress)
-    {
-        while (!pendingProgress.IsEmpty)
-        {
-            var pending = new List<Task>();
-            while (pendingProgress.TryDequeue(out var update))
-            {
-                pending.Add(update);
-            }
-
-            if (pending.Count > 0)
-            {
-                await Task.WhenAll(pending).ConfigureAwait(false);
-            }
-        }
-    }
-
-    private void VerifyUiThread()
-    {
-        if (Environment.CurrentManagedThreadId != uiThreadId)
-        {
-            throw new InvalidOperationException("This operation must run on the UI thread.");
-        }
+        UpdateSelectedCommand.NotifyCanExecuteChanged();
+        SelectAllAvailableCommand.NotifyCanExecuteChanged();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
-
-    private sealed class CallbackProgress<T>(Action<T> callback) : IProgress<T>
-    {
-        public void Report(T value) => callback(value);
-    }
 
     private sealed class UpdateOperation(
         CancellationTokenSource source,
