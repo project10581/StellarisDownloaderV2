@@ -241,12 +241,12 @@
                             <WrapPanel Margin="0,18,0,0">
                                 <Button Content="{DynamicResource Command.Delete}"
                                         IsEnabled="{Binding DataContext.CanModifySelectedMod, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        Click="DeleteSelected_Click"
+                                        Command="{Binding DeleteSelectedCommand}"
                                         Padding="10,6"
                                         Margin="0,0,8,8" />
                                 <Button Content="{DynamicResource Command.Redownload}"
                                         IsEnabled="{Binding DataContext.CanModifySelectedMod, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        Click="RedownloadSelected_Click"
+                                        Command="{Binding RedownloadSelectedCommand}"
                                         Padding="10,6"
                                         Margin="0,0,8,8" />
                             </WrapPanel>
@@ -326,10 +326,10 @@
                                 <Separator />
                                 <MenuItem Header="{DynamicResource Command.Delete}"
                                           IsEnabled="{Binding CanModifySelectedMod}"
-                                          Click="DeleteSelected_Click" />
+                                          Command="{Binding DeleteSelectedCommand}" />
                                 <MenuItem Header="{DynamicResource Command.Redownload}"
                                           IsEnabled="{Binding CanModifySelectedMod}"
-                                          Click="RedownloadSelected_Click" />
+                                          Command="{Binding RedownloadSelectedCommand}" />
                                 <MenuItem Header="{DynamicResource Command.CheckModUpdates}"
                                           IsEnabled="{Binding CanRunWriteOperations}"
                                           Click="CheckUpdatesButton_Click" />

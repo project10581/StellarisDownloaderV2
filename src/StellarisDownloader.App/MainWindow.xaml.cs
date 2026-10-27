@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -58,6 +57,7 @@ public partial class MainWindow : Window
         this.snapshotsWindowFactory = snapshotsWindowFactory;
         this.disposeViewModel = disposeViewModel;
         DataContext = viewModel;
+        viewModel.DownloadQueueRequested += ShowDownloadWindow;
     }
 
     private void DownloadModsButton_Click(object sender, RoutedEventArgs e)
@@ -90,80 +90,6 @@ public partial class MainWindow : Window
         window.Closed += (_, _) => downloadWindow = null;
         downloadWindow = window;
         window.Show();
-    }
-
-    private async void DeleteSelected_Click(object sender, RoutedEventArgs e) =>
-        await DeleteSelectedAsync(queueForRedownload: false).ConfigureAwait(true);
-
-    private async void RedownloadSelected_Click(object sender, RoutedEventArgs e) =>
-        await DeleteSelectedAsync(queueForRedownload: true).ConfigureAwait(true);
-
-    private async Task DeleteSelectedAsync(bool queueForRedownload)
-    {
-        var selected = viewModel.SelectedMod;
-        if (selected is null || !viewModel.CanModifySelectedMod)
-        {
-            return;
-        }
-
-        var message = FormatResource(
-            queueForRedownload
-                ? "Delete.RedownloadConfirmMessage"
-                : "Delete.ConfirmMessage",
-            selected.DisplayTitle,
-            selected.WorkshopId);
-        if (MessageBox.Show(
-                this,
-                message,
-                TryFindResource("Delete.ConfirmTitle") as string ?? "Confirm mod deletion",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        var result = queueForRedownload
-            ? await viewModel.DeleteAndQueueRedownloadAsync(permanently: false).ConfigureAwait(true)
-            : await viewModel.DeleteSelectedAsync(permanently: false).ConfigureAwait(true);
-        if (result.CanRetryPermanently)
-        {
-            var permanentMessage = FormatResource(
-                "Delete.PermanentConfirmMessage",
-                selected.DisplayTitle,
-                selected.WorkshopId);
-            if (MessageBox.Show(
-                    this,
-                    permanentMessage,
-                    TryFindResource("Delete.ConfirmTitle") as string
-                        ?? "Confirm permanent deletion",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Stop) == MessageBoxResult.Yes)
-            {
-                result = queueForRedownload
-                    ? await viewModel.DeleteAndQueueRedownloadAsync(
-                        permanently: true).ConfigureAwait(true)
-                    : await viewModel.DeleteSelectedAsync(
-                        permanently: true).ConfigureAwait(true);
-            }
-        }
-
-        if (result.QueuedForRedownload)
-        {
-            ShowDownloadWindow();
-        }
-
-        if (!string.IsNullOrWhiteSpace(result.Error))
-        {
-            var error = result.RequiresRescan
-                ? TryFindResource("Delete.RescanRequired") as string ?? result.Error
-                : result.Error;
-            MessageBox.Show(
-                this,
-                error,
-                TryFindResource("Delete.ErrorTitle") as string ?? "Mod operation failed",
-                MessageBoxButton.OK,
-                result.RequiresRescan ? MessageBoxImage.Warning : MessageBoxImage.Error);
-        }
     }
 
     private void OpenSelectedFolder_Click(object sender, RoutedEventArgs e)
@@ -227,12 +153,6 @@ public partial class MainWindow : Window
             MessageBoxImage.Error);
     }
 
-    private string FormatResource(string key, params object[] arguments)
-    {
-        var format = TryFindResource(key) as string ?? key;
-        return string.Format(CultureInfo.CurrentCulture, format, arguments);
-    }
-
     private void BrowseWorkshopButton_Click(object sender, RoutedEventArgs e)
     {
         if (browserWindow is not null)
@@ -282,6 +202,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        viewModel.DownloadQueueRequested -= ShowDownloadWindow;
         if (disposeViewModel) { viewModel.Dispose(); }
         base.OnClosed(e);
     }

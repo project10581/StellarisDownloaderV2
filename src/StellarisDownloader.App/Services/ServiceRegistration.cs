@@ -39,6 +39,7 @@ internal static class ServiceRegistration
         services.AddSingleton(_ => new ModSnapshotHistory(paths.SnapshotsDirectory));
         services.AddSingleton<DownloadQueueViewModel>();
         services.AddSingleton<WorkshopFavoritesViewModel>();
+        services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<ApplicationUpdateViewModel>(provider => new ApplicationUpdateViewModel(
             provider.GetRequiredService<IAppUpdateService>(),

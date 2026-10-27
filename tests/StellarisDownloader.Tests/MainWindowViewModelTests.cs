@@ -11,96 +11,157 @@ public sealed class MainWindowViewModelTests
     private static readonly DateTimeOffset TestTime = new(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
 
     [Fact]
-    public async Task SearchMatchesTitleAndWorkshopIdWhileListItemsDisplayOnlyTitles()
+    public void DeclinedDeleteCommandDoesNotDeleteFiles()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        AssertReady(fixture.ViewModel);
+        WpfTestRunner.Run(async () =>
+        {
+            var dialogs = new StubDialogService(false);
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords(), dialogs: dialogs);
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
 
-        fixture.ViewModel.SearchText = "200";
-        var result = Assert.Single(VisibleItems(fixture.ViewModel));
+            await fixture.ViewModel.DeleteSelectedCommand.ExecuteAsync(null);
 
-        Assert.Equal("Bravo", result.DisplayTitle);
-        Assert.DoesNotContain(result.WorkshopId, result.DisplayTitle, StringComparison.Ordinal);
+            Assert.Equal(1, dialogs.ConfirmationCount);
+            Assert.Equal(0, fixture.Operations.DeleteCallCount);
+        });
     }
 
     [Fact]
-    public async Task FourSortOptionsProduceTheExpectedOrders()
+    public void ConfirmedRedownloadRetriesPermanentlyAndRequestsQueueWindow()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        AssertReady(fixture.ViewModel);
+        WpfTestRunner.Run(async () =>
+        {
+            var dialogs = new StubDialogService(true, true);
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords(), dialogs: dialogs);
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            var queueRequested = false;
+            fixture.ViewModel.DownloadQueueRequested += () => queueRequested = true;
+            fixture.Operations.DeleteHandler = (_, id, permanently, _, _) => Task.FromResult(
+                permanently ? DeleteResultFor(id, OperationStatus.Succeeded)
+                    : DeleteResultFor(id, OperationStatus.Failed, canRetryPermanently: true, error: "Recycle failed."));
 
-        AssertOrder(fixture.ViewModel, ModSortOption.Title, "100", "200", "300");
-        AssertOrder(fixture.ViewModel, ModSortOption.RemoteUpdated, "200", "300", "100");
-        AssertOrder(fixture.ViewModel, ModSortOption.LastDownloaded, "100", "300", "200");
-        AssertOrder(fixture.ViewModel, ModSortOption.FileSize, "200", "300", "100");
+            await fixture.ViewModel.RedownloadSelectedCommand.ExecuteAsync(null);
+
+            Assert.Equal(2, dialogs.ConfirmationCount);
+            Assert.Equal(2, fixture.Operations.DeleteCallCount);
+            Assert.Equal(1, fixture.Operations.PermanentDeleteCallCount);
+            Assert.True(queueRequested);
+            Assert.Single(fixture.DownloadQueue.Items);
+            Assert.Empty(dialogs.Errors);
+        });
     }
 
     [Fact]
-    public async Task SelectionChangesOnlyTheSelectedDetailRecord()
+    public void SearchMatchesTitleAndWorkshopIdWhileListItemsDisplayOnlyTitles()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        AssertReady(fixture.ViewModel);
-        var selected = VisibleItems(fixture.ViewModel)[1];
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            AssertReady(fixture.ViewModel);
 
-        fixture.ViewModel.SelectedMod = selected;
+            fixture.ViewModel.SearchText = "200";
+            var result = Assert.Single(VisibleItems(fixture.ViewModel));
 
-        Assert.True(fixture.ViewModel.HasSelection);
-        Assert.Same(selected, fixture.ViewModel.SelectedMod);
-        Assert.Equal("200", fixture.ViewModel.SelectedMod.Record.WorkshopId);
-        Assert.Equal(3, VisibleItems(fixture.ViewModel).Count);
+            Assert.Equal("Bravo", result.DisplayTitle);
+            Assert.DoesNotContain(result.WorkshopId, result.DisplayTitle, StringComparison.Ordinal);
+        });
     }
 
     [Fact]
-    public async Task StaleCacheClearsRowsAndDisablesLibraryWrites()
+    public void FourSortOptionsProduceTheExpectedOrders()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        await fixture.Repository.MarkCacheStaleAsync();
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            AssertReady(fixture.ViewModel);
 
-        await fixture.ViewModel.RefreshAsync();
-
-        Assert.Empty(VisibleItems(fixture.ViewModel));
-        Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
-        Assert.False(fixture.ViewModel.CanModifyLibrary);
-        Assert.False(fixture.ViewModel.CanRunWriteOperations);
-        Assert.True(fixture.ViewModel.RescanCommand.CanExecute(null));
+            AssertOrder(fixture.ViewModel, ModSortOption.Title, "100", "200", "300");
+            AssertOrder(fixture.ViewModel, ModSortOption.RemoteUpdated, "200", "300", "100");
+            AssertOrder(fixture.ViewModel, ModSortOption.LastDownloaded, "100", "300", "200");
+            AssertOrder(fixture.ViewModel, ModSortOption.FileSize, "200", "300", "100");
+        });
     }
 
     [Fact]
-    public async Task JunctionRepairFailurePreventsRowsAndDangerousOperations()
+    public void SelectionChangesOnlyTheSelectedDetailRecord()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        fixture.Library.JunctionResult = new JunctionEnsureResult(
-            OperationStatus.Failed,
-            "junction",
-            fixture.LibraryRoot,
-            Changed: false,
-            "Junction repair failed.");
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            AssertReady(fixture.ViewModel);
+            var selected = VisibleItems(fixture.ViewModel)[1];
 
-        await fixture.ViewModel.RefreshAsync();
+            fixture.ViewModel.SelectedMod = selected;
 
-        Assert.Equal(LibraryViewState.Error, fixture.ViewModel.State);
-        Assert.Equal("Junction repair failed.", fixture.ViewModel.LastError);
-        Assert.Empty(VisibleItems(fixture.ViewModel));
-        Assert.False(fixture.ViewModel.CanRunWriteOperations);
-        Assert.True(fixture.ViewModel.RescanCommand.CanExecute(null));
+            Assert.True(fixture.ViewModel.HasSelection);
+            Assert.Same(selected, fixture.ViewModel.SelectedMod);
+            Assert.Equal("200", fixture.ViewModel.SelectedMod.Record.WorkshopId);
+            Assert.Equal(3, VisibleItems(fixture.ViewModel).Count);
+        });
     }
 
     [Fact]
-    public async Task StartupRefreshEnsuresJunctionBeforeScanning()
+    public void StaleCacheClearsRowsAndDisablesLibraryWrites()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(
-            CreateRecords(),
-            refreshOnStartup: true);
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            await fixture.Repository.MarkCacheStaleAsync();
 
-        await fixture.ViewModel.InitializeAsync();
+            await fixture.ViewModel.RefreshAsync();
 
-        Assert.Equal(2, fixture.Library.EnsureJunctionCount);
-        Assert.Equal(1, fixture.Library.ScanCount);
-        Assert.Equal(LibraryViewState.Ready, fixture.ViewModel.State);
+            Assert.Empty(VisibleItems(fixture.ViewModel));
+            Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
+            Assert.False(fixture.ViewModel.CanModifyLibrary);
+            Assert.False(fixture.ViewModel.CanRunWriteOperations);
+            Assert.True(fixture.ViewModel.RescanCommand.CanExecute(null));
+        });
+    }
+
+    [Fact]
+    public void JunctionRepairFailurePreventsRowsAndDangerousOperations()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            fixture.Library.JunctionResult = new JunctionEnsureResult(
+                OperationStatus.Failed,
+                "junction",
+                fixture.LibraryRoot,
+                Changed: false,
+                "Junction repair failed.");
+
+            await fixture.ViewModel.RefreshAsync();
+
+            Assert.Equal(LibraryViewState.Error, fixture.ViewModel.State);
+            Assert.Equal("Junction repair failed.", fixture.ViewModel.LastError);
+            Assert.Empty(VisibleItems(fixture.ViewModel));
+            Assert.False(fixture.ViewModel.CanRunWriteOperations);
+            Assert.True(fixture.ViewModel.RescanCommand.CanExecute(null));
+        });
+    }
+
+    [Fact]
+    public void StartupRefreshEnsuresJunctionBeforeScanning()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(
+                CreateRecords(),
+                refreshOnStartup: true);
+
+            await fixture.ViewModel.InitializeAsync();
+
+            Assert.Equal(2, fixture.Library.EnsureJunctionCount);
+            Assert.Equal(1, fixture.Library.ScanCount);
+            Assert.Equal(LibraryViewState.Ready, fixture.ViewModel.State);
+        });
     }
 
     [Fact]
@@ -137,152 +198,173 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task ANewSelectionPreventsAnOlderPreviewRequestFromOverwritingIt()
+    public void ANewSelectionPreventsAnOlderPreviewRequestFromOverwritingIt()
     {
-        var preview = new StubPreviewImageService();
-        var firstResponse = preview.EnqueueResponse();
-        var secondResponse = preview.EnqueueResponse();
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords(withPreviews: true), preview);
-        await fixture.ViewModel.InitializeAsync();
-        AssertReady(fixture.ViewModel);
-        var items = VisibleItems(fixture.ViewModel);
-        var firstImage = new DrawingImage();
-        firstImage.Freeze();
-        var secondImage = new DrawingImage();
-        secondImage.Freeze();
-
-        fixture.ViewModel.SelectedMod = items[0];
-        fixture.ViewModel.SelectedMod = items[1];
-        secondResponse.SetResult(secondImage);
-        await WaitUntilAsync(() => ReferenceEquals(fixture.ViewModel.PreviewImage, secondImage));
-        firstResponse.SetResult(firstImage);
-        await Task.Delay(50);
-
-        Assert.Same(secondImage, fixture.ViewModel.PreviewImage);
-        Assert.Equal(2, preview.CallCount);
-    }
-
-    [Fact]
-    public async Task DeleteIsRejectedWithoutASelection()
-    {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        AssertReady(fixture.ViewModel);
-
-        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
-
-        Assert.False(result.Started);
-        Assert.Null(result.DeleteResult);
-        Assert.Equal(0, fixture.Operations.DeleteCallCount);
-    }
-
-    [Fact]
-    public async Task DeleteIsRejectedWhenTheCacheIsUnsafe()
-    {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
-        await fixture.Repository.MarkCacheStaleAsync();
-        await fixture.ViewModel.RefreshAsync();
-
-        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
-
-        Assert.False(result.Started);
-        Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
-        Assert.Equal(0, fixture.Operations.DeleteCallCount);
-    }
-
-    [Fact]
-    public async Task SuccessfulRecycleDeleteRefreshesTheLibrary()
-    {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
-        fixture.Operations.DeleteHandler = async (root, id, permanently, _, token) =>
+        WpfTestRunner.Run(async () =>
         {
-            Assert.False(permanently);
-            Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
-            return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
-        };
+            var preview = new StubPreviewImageService();
+            var firstResponse = preview.EnqueueResponse();
+            var secondResponse = preview.EnqueueResponse();
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords(withPreviews: true), preview);
+            await fixture.ViewModel.InitializeAsync();
+            AssertReady(fixture.ViewModel);
+            var items = VisibleItems(fixture.ViewModel);
+            var firstImage = new DrawingImage();
+            firstImage.Freeze();
+            var secondImage = new DrawingImage();
+            secondImage.Freeze();
 
-        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+            fixture.ViewModel.SelectedMod = items[0];
+            fixture.ViewModel.SelectedMod = items[1];
+            secondResponse.SetResult(secondImage);
+            await WaitUntilAsync(() => ReferenceEquals(fixture.ViewModel.PreviewImage, secondImage));
+            firstResponse.SetResult(firstImage);
+            await Task.Delay(50);
 
-        Assert.True(result.Started);
-        Assert.Equal(OperationStatus.Succeeded, result.DeleteResult?.Status);
-        Assert.Equal(2, VisibleItems(fixture.ViewModel).Count);
-        Assert.Null(fixture.ViewModel.SelectedMod);
-        Assert.Equal(2, fixture.Library.EnsureJunctionCount);
+            Assert.Same(secondImage, fixture.ViewModel.PreviewImage);
+            Assert.Equal(2, preview.CallCount);
+        });
     }
 
     [Fact]
-    public async Task RecycleFailureReturnsThePermanentRetrySignalWithoutFallingBack()
+    public void DeleteIsRejectedWithoutASelection()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
-        fixture.Operations.DeleteHandler = (_, id, permanently, _, _) =>
+        WpfTestRunner.Run(async () =>
         {
-            Assert.False(permanently);
-            return Task.FromResult(DeleteResultFor(
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            AssertReady(fixture.ViewModel);
+
+            var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+            Assert.False(result.Started);
+            Assert.Null(result.DeleteResult);
+            Assert.Equal(0, fixture.Operations.DeleteCallCount);
+        });
+    }
+
+    [Fact]
+    public void DeleteIsRejectedWhenTheCacheIsUnsafe()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            await fixture.Repository.MarkCacheStaleAsync();
+            await fixture.ViewModel.RefreshAsync();
+
+            var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+            Assert.False(result.Started);
+            Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
+            Assert.Equal(0, fixture.Operations.DeleteCallCount);
+        });
+    }
+
+    [Fact]
+    public void SuccessfulRecycleDeleteRefreshesTheLibrary()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            fixture.Operations.DeleteHandler = async (root, id, permanently, _, token) =>
+            {
+                Assert.False(permanently);
+                Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
+                return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
+            };
+
+            var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+            Assert.True(result.Started);
+            Assert.Equal(OperationStatus.Succeeded, result.DeleteResult?.Status);
+            Assert.Equal(2, VisibleItems(fixture.ViewModel).Count);
+            Assert.Null(fixture.ViewModel.SelectedMod);
+            Assert.Equal(2, fixture.Library.EnsureJunctionCount);
+        });
+    }
+
+    [Fact]
+    public void RecycleFailureReturnsThePermanentRetrySignalWithoutFallingBack()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            fixture.Operations.DeleteHandler = (_, id, permanently, _, _) =>
+            {
+                Assert.False(permanently);
+                return Task.FromResult(DeleteResultFor(
+                    id,
+                    OperationStatus.Failed,
+                    canRetryPermanently: true,
+                    error: "Recycle Bin failed."));
+            };
+
+            var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+
+            Assert.True(result.CanRetryPermanently);
+            Assert.False(result.QueuedForRedownload);
+            Assert.Equal("Recycle Bin failed.", fixture.ViewModel.LastError);
+            Assert.Equal(1, fixture.Operations.DeleteCallCount);
+            Assert.Equal(0, fixture.Operations.PermanentDeleteCallCount);
+        });
+    }
+
+    [Fact]
+    public void CacheFailureAfterFileRemovalMakesTheLibraryStaleAndRequiresRescan()
+    {
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            fixture.Operations.DeleteHandler = (_, id, _, _, _) => Task.FromResult(DeleteResultFor(
                 id,
                 OperationStatus.Failed,
-                canRetryPermanently: true,
-                error: "Recycle Bin failed."));
-        };
+                filesRemoved: true,
+                requiresRescan: true,
+                error: "Cache delete failed."));
 
-        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
+            var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
 
-        Assert.True(result.CanRetryPermanently);
-        Assert.False(result.QueuedForRedownload);
-        Assert.Equal("Recycle Bin failed.", fixture.ViewModel.LastError);
-        Assert.Equal(1, fixture.Operations.DeleteCallCount);
-        Assert.Equal(0, fixture.Operations.PermanentDeleteCallCount);
+            Assert.True(result.RequiresRescan);
+            Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
+            Assert.False(fixture.ViewModel.CanModifyLibrary);
+            Assert.Empty(VisibleItems(fixture.ViewModel));
+            Assert.Contains("Rescan", fixture.ViewModel.LastError, StringComparison.Ordinal);
+            Assert.Equal(
+                CacheState.Stale,
+                (await fixture.Repository.GetCacheStateAsync(fixture.LibraryRoot)).State);
+        });
     }
 
     [Fact]
-    public async Task CacheFailureAfterFileRemovalMakesTheLibraryStaleAndRequiresRescan()
+    public void DeleteAndRedownloadUsesOnlyTheSharedQueue()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
-        fixture.Operations.DeleteHandler = (_, id, _, _, _) => Task.FromResult(DeleteResultFor(
-            id,
-            OperationStatus.Failed,
-            filesRemoved: true,
-            requiresRescan: true,
-            error: "Cache delete failed."));
-
-        var result = await fixture.ViewModel.DeleteSelectedAsync(permanently: false);
-
-        Assert.True(result.RequiresRescan);
-        Assert.Equal(LibraryViewState.Stale, fixture.ViewModel.State);
-        Assert.False(fixture.ViewModel.CanModifyLibrary);
-        Assert.Empty(VisibleItems(fixture.ViewModel));
-        Assert.Contains("Rescan", fixture.ViewModel.LastError, StringComparison.Ordinal);
-        Assert.Equal(
-            CacheState.Stale,
-            (await fixture.Repository.GetCacheStateAsync(fixture.LibraryRoot)).State);
-    }
-
-    [Fact]
-    public async Task DeleteAndRedownloadUsesOnlyTheSharedQueue()
-    {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
-        fixture.Operations.DeleteHandler = async (root, id, _, _, token) =>
+        WpfTestRunner.Run(async () =>
         {
-            Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
-            return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
-        };
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            fixture.Operations.DeleteHandler = async (root, id, _, _, token) =>
+            {
+                Assert.True(await fixture.Repository.DeleteAsync(root, id, token));
+                return DeleteResultFor(id, OperationStatus.Succeeded, recordRemoved: true);
+            };
 
-        var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
+            var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
 
-        Assert.True(result.QueuedForRedownload);
-        Assert.Equal("100", Assert.Single(fixture.DownloadQueue.Items).WorkshopId);
-        Assert.Equal(DownloadQueueItemStatus.Ready, fixture.DownloadQueue.Items[0].Status);
-        Assert.Equal(0, fixture.Operations.RedownloadCallCount);
-        Assert.Equal(1, fixture.Operations.DeleteCallCount);
+            Assert.True(result.QueuedForRedownload);
+            Assert.Equal("100", Assert.Single(fixture.DownloadQueue.Items).WorkshopId);
+            Assert.Equal(DownloadQueueItemStatus.Ready, fixture.DownloadQueue.Items[0].Status);
+            Assert.Equal(0, fixture.Operations.RedownloadCallCount);
+            Assert.Equal(1, fixture.Operations.DeleteCallCount);
+        });
     }
 
     [Fact]
@@ -316,21 +398,24 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task FailedDeleteDoesNotEnterTheDownloadQueue()
+    public void FailedDeleteDoesNotEnterTheDownloadQueue()
     {
-        using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
-        await fixture.ViewModel.InitializeAsync();
-        fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
-        fixture.Operations.DeleteHandler = (_, id, _, _, _) => Task.FromResult(DeleteResultFor(
-            id,
-            OperationStatus.Failed,
-            error: "Delete failed."));
+        WpfTestRunner.Run(async () =>
+        {
+            using var fixture = await MainWindowFixture.CreateAsync(CreateRecords());
+            await fixture.ViewModel.InitializeAsync();
+            fixture.ViewModel.SelectedMod = VisibleItems(fixture.ViewModel)[0];
+            fixture.Operations.DeleteHandler = (_, id, _, _, _) => Task.FromResult(DeleteResultFor(
+                id,
+                OperationStatus.Failed,
+                error: "Delete failed."));
 
-        var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
+            var result = await fixture.ViewModel.DeleteAndQueueRedownloadAsync(permanently: false);
 
-        Assert.False(result.QueuedForRedownload);
-        Assert.Empty(fixture.DownloadQueue.Items);
-        Assert.Equal(0, fixture.Operations.RedownloadCallCount);
+            Assert.False(result.QueuedForRedownload);
+            Assert.Empty(fixture.DownloadQueue.Items);
+            Assert.Equal(0, fixture.Operations.RedownloadCallCount);
+        });
     }
 
     [Fact]
@@ -438,6 +523,7 @@ public sealed class MainWindowViewModelTests
 
             var scanTask = fixture.ViewModel.RescanAsync();
 
+            await Task.Yield();
             Assert.Equal("[1/3] Scanning local mod 1 of 3.", fixture.ViewModel.ProgressMessage);
 
             completion.SetResult(new LibraryScanResult
@@ -564,7 +650,8 @@ public sealed class MainWindowViewModelTests
         public static async Task<MainWindowFixture> CreateAsync(
             IReadOnlyCollection<ModRecord> records,
             StubPreviewImageService? preview = null,
-            bool refreshOnStartup = false)
+            bool refreshOnStartup = false,
+            StubDialogService? dialogs = null)
         {
             var temporaryDirectory = new TemporaryDirectory();
             var root = temporaryDirectory.GetPath("library");
@@ -589,7 +676,8 @@ public sealed class MainWindowViewModelTests
                 library,
                 preview ?? new StubPreviewImageService(),
                 operations,
-                downloadQueue);
+                downloadQueue,
+                dialogs);
             return new MainWindowFixture(
                 temporaryDirectory,
                 repository,

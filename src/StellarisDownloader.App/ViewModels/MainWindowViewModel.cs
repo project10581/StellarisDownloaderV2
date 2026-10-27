@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Globalization;
+using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -12,7 +14,7 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class MainWindowViewModel : ObservableObject, IDisposable
+public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly ISettingsStore settingsStore;
     private readonly IModRepository modRepository;
@@ -21,20 +23,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IModOperationService modOperationService;
     private readonly DownloadQueueViewModel downloadQueue;
     private readonly ObservableCollection<ModListItemViewModel> items = [];
-    private readonly AsyncRelayCommand refreshCommand;
-    private readonly AsyncRelayCommand rescanCommand;
+    private readonly IDialogService dialogs;
+    private readonly Func<string, string?> text;
     private CancellationTokenSource? previewCancellation;
     private string? libraryRoot;
-    private string searchText = string.Empty;
-    private ModSortOption selectedSort = ModSortOption.Title;
-    private ModListItemViewModel? selectedMod;
-    private ImageSource? previewImage;
-    private LibraryViewState state = LibraryViewState.Loading;
-    private bool isBusy;
-    private bool canModifyLibrary;
     private bool refreshLibraryOnStartup;
-    private string? progressMessage;
-    private string? lastError;
 
     public MainWindowViewModel(
         ISettingsStore settingsStore,
@@ -42,7 +35,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ILibraryService libraryService,
         IPreviewImageService previewImageService,
         IModOperationService modOperationService,
-        DownloadQueueViewModel downloadQueue)
+        DownloadQueueViewModel downloadQueue,
+        IDialogService? dialogs = null,
+        Func<string, string?>? text = null)
     {
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(modRepository);
@@ -57,6 +52,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         this.previewImageService = previewImageService;
         this.modOperationService = modOperationService;
         this.downloadQueue = downloadQueue;
+        this.dialogs = dialogs ?? new DialogService();
+        this.text = text ?? (key => Application.Current?.TryFindResource(key) as string);
         downloadQueue.PropertyChanged += OnDownloadQueuePropertyChanged;
         downloadQueue.BatchCompleted += OnDownloadBatchCompletedAsync;
 
@@ -65,95 +62,48 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             Filter = FilterMod,
         };
         ApplySort();
-        refreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy);
-        rescanCommand = new AsyncRelayCommand(RescanAsync, CanRescan);
     }
 
     public ICollectionView ModsView { get; }
 
-    public IAsyncRelayCommand RefreshCommand => refreshCommand;
+    public event Action? DownloadQueueRequested;
 
-    public IAsyncRelayCommand RescanCommand => rescanCommand;
+    [ObservableProperty]
+    public partial string SearchText { get; set; } = string.Empty;
 
-    public string SearchText
+    [ObservableProperty]
+    public partial ModSortOption SelectedSort { get; set; } = ModSortOption.Title;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelection), nameof(CanModifySelectedMod))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand), nameof(RedownloadSelectedCommand))]
+    public partial ModListItemViewModel? SelectedMod { get; set; }
+
+    [ObservableProperty]
+    public partial ImageSource? PreviewImage { get; private set; }
+
+    [ObservableProperty]
+    public partial LibraryViewState State { get; private set; } = LibraryViewState.Loading;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRunWriteOperations), nameof(CanManageSnapshots), nameof(CanModifySelectedMod))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand), nameof(RescanCommand), nameof(DeleteSelectedCommand), nameof(RedownloadSelectedCommand))]
+    public partial bool IsBusy { get; private set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRunWriteOperations), nameof(CanModifySelectedMod))]
+    [NotifyCanExecuteChangedFor(nameof(RescanCommand), nameof(DeleteSelectedCommand), nameof(RedownloadSelectedCommand))]
+    public partial bool CanModifyLibrary { get; private set; }
+
+    partial void OnSearchTextChanged(string value)
     {
-        get => searchText;
-        set
-        {
-            if (SetProperty(ref searchText, value ?? string.Empty))
-            {
-                ModsView.Refresh();
-            }
-        }
+        if (value is null) { SearchText = string.Empty; }
+        else { ModsView.Refresh(); }
     }
 
-    public ModSortOption SelectedSort
-    {
-        get => selectedSort;
-        set
-        {
-            if (SetProperty(ref selectedSort, value))
-            {
-                ApplySort();
-            }
-        }
-    }
+    partial void OnSelectedSortChanged(ModSortOption value) => ApplySort();
 
-    public ModListItemViewModel? SelectedMod
-    {
-        get => selectedMod;
-        set
-        {
-            if (SetProperty(ref selectedMod, value))
-            {
-                StartPreviewLoad(value);
-                OnPropertyChanged(nameof(HasSelection));
-                OnPropertyChanged(nameof(CanModifySelectedMod));
-            }
-        }
-    }
-
-    public ImageSource? PreviewImage
-    {
-        get => previewImage;
-        private set => SetProperty(ref previewImage, value);
-    }
-
-    public LibraryViewState State
-    {
-        get => state;
-        private set => SetProperty(ref state, value);
-    }
-
-    public bool IsBusy
-    {
-        get => isBusy;
-        private set
-        {
-            if (SetProperty(ref isBusy, value))
-            {
-                OnPropertyChanged(nameof(CanRunWriteOperations));
-                OnPropertyChanged(nameof(CanManageSnapshots));
-                OnPropertyChanged(nameof(CanModifySelectedMod));
-                refreshCommand.NotifyCanExecuteChanged();
-                rescanCommand.NotifyCanExecuteChanged();
-            }
-        }
-    }
-
-    public bool CanModifyLibrary
-    {
-        get => canModifyLibrary;
-        private set
-        {
-            if (SetProperty(ref canModifyLibrary, value))
-            {
-                OnPropertyChanged(nameof(CanRunWriteOperations));
-                OnPropertyChanged(nameof(CanModifySelectedMod));
-                rescanCommand.NotifyCanExecuteChanged();
-            }
-        }
-    }
+    partial void OnSelectedModChanged(ModListItemViewModel? value) => StartPreviewLoad(value);
 
     public bool HasSelection => SelectedMod is not null;
 
@@ -163,17 +113,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool CanModifySelectedMod => CanRunWriteOperations && HasSelection;
 
-    public string? ProgressMessage
-    {
-        get => progressMessage;
-        private set => SetProperty(ref progressMessage, value);
-    }
+    [ObservableProperty]
+    public partial string? ProgressMessage { get; private set; }
 
-    public string? LastError
-    {
-        get => lastError;
-        private set => SetProperty(ref lastError, value);
-    }
+    [ObservableProperty]
+    public partial string? LastError { get; private set; }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -186,6 +130,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    private bool CanRefresh => !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanRefresh), AllowConcurrentExecutions = false)]
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         if (IsBusy)
@@ -203,6 +150,40 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             IsBusy = false;
         }
     }
+
+    [RelayCommand(CanExecute = nameof(CanModifySelectedMod), AllowConcurrentExecutions = false)]
+    private Task DeleteSelected() => ConfirmAndDeleteAsync(queueForRedownload: false);
+
+    [RelayCommand(CanExecute = nameof(CanModifySelectedMod), AllowConcurrentExecutions = false)]
+    private Task RedownloadSelected() => ConfirmAndDeleteAsync(queueForRedownload: true);
+
+    private async Task ConfirmAndDeleteAsync(bool queueForRedownload)
+    {
+        var selected = SelectedMod;
+        if (selected is null || !CanModifySelectedMod) { return; }
+        var message = FormatResource(queueForRedownload ? "Delete.RedownloadConfirmMessage" : "Delete.ConfirmMessage",
+            selected.DisplayTitle, selected.WorkshopId);
+        if (!dialogs.Confirm(message, text("Delete.ConfirmTitle") ?? "Confirm mod deletion", MessageBoxImage.Warning)) { return; }
+
+        var result = await DeleteSelectedCoreAsync(false, queueForRedownload, null, CancellationToken.None);
+        if (result.CanRetryPermanently && dialogs.Confirm(
+            FormatResource("Delete.PermanentConfirmMessage", selected.DisplayTitle, selected.WorkshopId),
+            text("Delete.ConfirmTitle") ?? "Confirm permanent deletion", MessageBoxImage.Stop))
+        {
+            result = await DeleteSelectedCoreAsync(true, queueForRedownload, null, CancellationToken.None);
+        }
+
+        if (result.QueuedForRedownload) { DownloadQueueRequested?.Invoke(); }
+        if (!string.IsNullOrWhiteSpace(result.Error))
+        {
+            var error = result.RequiresRescan ? text("Delete.RescanRequired") ?? result.Error : result.Error;
+            dialogs.ShowError(error, text("Delete.ErrorTitle") ?? "Mod operation failed",
+                result.RequiresRescan ? MessageBoxImage.Warning : MessageBoxImage.Error);
+        }
+    }
+
+    private string FormatResource(string key, params object[] arguments) =>
+        string.Format(CultureInfo.CurrentCulture, text(key) ?? key, arguments);
 
     public Task<SelectedModDeletionResult> DeleteSelectedAsync(
         bool permanently,
@@ -224,6 +205,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             progress,
             cancellationToken);
 
+    [RelayCommand(CanExecute = nameof(CanRescan), AllowConcurrentExecutions = false)]
     public async Task RescanAsync(CancellationToken cancellationToken = default)
     {
         if (!CanRescan() || libraryRoot is null)
@@ -271,6 +253,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            await Task.Yield();
             ProgressMessage = null;
             IsBusy = false;
         }
@@ -346,6 +329,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            await Task.Yield();
             ProgressMessage = null;
         }
     }
@@ -453,7 +437,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(CanRunWriteOperations));
             OnPropertyChanged(nameof(CanManageSnapshots));
             OnPropertyChanged(nameof(CanModifySelectedMod));
-            rescanCommand.NotifyCanExecuteChanged();
+            RescanCommand.NotifyCanExecuteChanged();
+            DeleteSelectedCommand.NotifyCanExecuteChanged();
+            RedownloadSelectedCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -465,7 +451,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private SynchronousProgress<OperationProgress> CreateOperationProgress() =>
+    private Progress<OperationProgress> CreateOperationProgress() =>
         new(UpdateOperationProgress);
 
     private void UpdateOperationProgress(OperationProgress value)
@@ -478,11 +464,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ProgressMessage = value.Total > 0
             ? $"[{value.Completed}/{value.Total}] {value.Message}"
             : value.Message;
-    }
-
-    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
-    {
-        public void Report(T value) => handler(value);
     }
 
     private static string BuildRescanRequiredError(string? error) =>
