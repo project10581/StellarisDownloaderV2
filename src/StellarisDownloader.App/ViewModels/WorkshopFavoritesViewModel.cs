@@ -5,17 +5,20 @@ using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.App.ViewModels;
 
-public sealed class WorkshopFavoritesViewModel(IWorkshopFavoritesStore store) : ObservableObject
+public sealed partial class WorkshopFavoritesViewModel(IWorkshopFavoritesStore store) : ObservableObject
 {
-    private IReadOnlyList<WorkshopFavorite> items = [];
-    private string? lastError;
-    private string? warning;
     private int pendingOperations;
     private Task pendingOperation = Task.CompletedTask;
 
-    public IReadOnlyList<WorkshopFavorite> Items { get => items; private set => SetProperty(ref items, value); }
-    public string? LastError { get => lastError; private set => SetProperty(ref lastError, value); }
-    public string? Warning { get => warning; private set => SetProperty(ref warning, value); }
+    [ObservableProperty]
+    public partial IReadOnlyList<WorkshopFavorite> Items { get; private set; } = [];
+
+    [ObservableProperty]
+    public partial string? LastError { get; private set; }
+
+    [ObservableProperty]
+    public partial string? Warning { get; private set; }
+
     public bool IsBusy => pendingOperations > 0;
     public bool IsIdle => !IsBusy;
     public bool Contains(string id) => Items.Any(item => item.WorkshopId == id);
