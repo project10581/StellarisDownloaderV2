@@ -63,6 +63,12 @@
                          SelectionMode="Extended"
                          VirtualizingPanel.IsVirtualizing="True"
                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="ToolTip" Value="{DynamicResource Browser.OpenModHint}" />
+                            <EventSetter Event="MouseDoubleClick" Handler="QueueItem_MouseDoubleClick" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Margin="4">
@@ -156,6 +162,12 @@
                     <ListBox x:Name="BrowserFavoritesList" Grid.Row="1" ItemsSource="{Binding Items}"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="ToolTip" Value="{DynamicResource Browser.OpenModHint}" />
+                                <EventSetter Event="MouseDoubleClick" Handler="FavoriteItem_MouseDoubleClick" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="4">

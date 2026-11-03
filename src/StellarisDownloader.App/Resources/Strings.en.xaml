@@ -20,6 +20,7 @@
     <sys:String x:Key="Browser.FavoriteCurrent">☆ Save this mod</sys:String>
     <sys:String x:Key="Browser.UnfavoriteCurrent">★ Unsave this mod</sys:String>
     <sys:String x:Key="Browser.OpenFavorite">Open Workshop page</sys:String>
+    <sys:String x:Key="Browser.OpenModHint">Double-click to open this mod in the Workshop browser.</sys:String>
     <sys:String x:Key="Browser.DownloadFavorite">Add to download queue</sys:String>
     <sys:String x:Key="Browser.RemoveFavorite">Remove from saved</sys:String>
     <sys:String x:Key="Snapshots.VersionLabel">{0:yyyy-MM-dd HH:mm:ss} · {1} mods · #{2}</sys:String>

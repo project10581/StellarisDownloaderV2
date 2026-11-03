@@ -55,6 +55,12 @@
                          SelectionMode="Extended"
                          VirtualizingPanel.IsVirtualizing="True"
                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="ToolTip" Value="{DynamicResource Browser.OpenModHint}" />
+                            <EventSetter Event="MouseDoubleClick" Handler="QueueItem_MouseDoubleClick" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid Margin="4">

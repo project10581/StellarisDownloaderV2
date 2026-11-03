@@ -20,6 +20,7 @@
     <sys:String x:Key="Browser.FavoriteCurrent">☆ 收藏此页模组</sys:String>
     <sys:String x:Key="Browser.UnfavoriteCurrent">★ 取消收藏</sys:String>
     <sys:String x:Key="Browser.OpenFavorite">打开工坊页面</sys:String>
+    <sys:String x:Key="Browser.OpenModHint">双击在工坊浏览器中打开此模组。</sys:String>
     <sys:String x:Key="Browser.DownloadFavorite">加入下载队列</sys:String>
     <sys:String x:Key="Browser.RemoveFavorite">取消收藏</sys:String>
     <sys:String x:Key="Snapshots.VersionLabel">{0:yyyy-MM-dd HH:mm:ss} · {1} 个模组 · #{2}</sys:String>

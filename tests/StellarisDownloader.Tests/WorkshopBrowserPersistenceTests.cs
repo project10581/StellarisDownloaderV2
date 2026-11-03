@@ -1,6 +1,7 @@
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using StellarisDownloader.App;
@@ -8,20 +9,21 @@ using StellarisDownloader.App.Services;
 using StellarisDownloader.App.ViewModels;
 using StellarisDownloader.Core.Models;
 using StellarisDownloader.Core.Persistence;
+using StellarisDownloader.Core.Services;
 
 namespace StellarisDownloader.Tests;
 
 public sealed class WorkshopBrowserPersistenceTests
 {
     [BrowserRuntimeFact]
-    public void RealBrowserStarPersistsAcrossWindowAndStoreRecreation()
+    public void RealBrowserPreservesFavoritesAndOpensDoubleClickedMods()
     {
         WpfTestRunner.Run(async () =>
         {
             using var temporary = new TemporaryDirectory();
             var favoritesPath = temporary.GetPath("favorites.json");
             using var queue = new DownloadQueueViewModel(new StubSettingsStore(new AppSettings()),
-                new CompiledXamlTests.UnexpectedWorkshopClient(), new CompiledXamlTests.UnexpectedModOperationService());
+                new EmptyWorkshopClient(), new CompiledXamlTests.UnexpectedModOperationService());
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 using var store = new WorkshopFavoritesStore(favoritesPath);
@@ -64,8 +66,11 @@ public sealed class WorkshopBrowserPersistenceTests
                 };
                 try
                 {
+                    // A queue window can request a page before WebView2 has initialized.
+                    browser.OpenWorkshop("456");
                     browser.Show();
                     await WaitUntilAsync(() => Task.FromResult(webView.CoreWebView2 is not null));
+                    await WaitUntilAsync(() => Task.FromResult(webView.CoreWebView2.Source == WorkshopUrl("456")));
                     await WaitUntilAsync(async () => await webView.ExecuteScriptAsync(
                         "!!document.getElementById('stellaris-downloader-workshop-overlay')?.shadowRoot.querySelector('.stellaris-downloader-favorite-button')") == "true");
                     if (attempt == 0)
@@ -94,7 +99,55 @@ public sealed class WorkshopBrowserPersistenceTests
                     var sidebar = Assert.IsType<TabControl>(browser.FindName("BrowserSidebar"));
                     sidebar.SelectedIndex = 1;
                     await System.Windows.Threading.Dispatcher.Yield();
-                    Assert.Single(Assert.IsType<ListBox>(browser.FindName("BrowserFavoritesList")).Items);
+                    var favoriteList = Assert.IsType<ListBox>(browser.FindName("BrowserFavoritesList"));
+                    Assert.Single(favoriteList.Items);
+                    favoriteList.UpdateLayout();
+                    Assert.True(DoubleClick(favoriteList.ItemContainerGenerator.ContainerFromIndex(0)).Handled);
+                    await WaitUntilAsync(() => Task.FromResult(webView.CoreWebView2.Source == WorkshopUrl("123")));
+                    Assert.Empty(queue.Items);
+                    Assert.Single(favorites.Items);
+
+                    if (attempt == 1)
+                    {
+                        await queue.EnqueueAsync("789\n101112");
+                        sidebar.SelectedIndex = 0;
+                        await System.Windows.Threading.Dispatcher.Yield();
+                        var queueList = Assert.IsType<ListBox>(browser.FindName("BrowserQueueList"));
+                        queueList.UpdateLayout();
+                        queueList.SelectedIndex = 0;
+                        var secondRow = queueList.ItemContainerGenerator.ContainerFromIndex(1);
+                        Assert.False(DoubleClick(secondRow, MouseButton.Right).Handled);
+                        Assert.False(DoubleClick(queueList).Handled);
+                        Assert.Equal(WorkshopUrl("123"), webView.CoreWebView2.Source);
+                        Assert.True(DoubleClick(secondRow).Handled);
+                        await WaitUntilAsync(() => Task.FromResult(webView.CoreWebView2.Source == WorkshopUrl("101112")));
+
+                        var queueWindow = new DownloadQueueWindow(queue)
+                        {
+                            WindowStartupLocation = WindowStartupLocation.Manual,
+                            Left = -32000,
+                            Top = -32000,
+                            ShowInTaskbar = false,
+                        };
+                        queueWindow.WorkshopRequested += browser.OpenWorkshop;
+                        try
+                        {
+                            queueWindow.Show();
+                            queueWindow.UpdateLayout();
+                            var separateList = Assert.IsType<ListBox>(queueWindow.FindName("QueueList"));
+                            separateList.SelectedIndex = 1;
+                            Assert.False(DoubleClick(separateList).Handled);
+                            Assert.True(DoubleClick(separateList.ItemContainerGenerator.ContainerFromIndex(0)).Handled);
+                            await WaitUntilAsync(() => Task.FromResult(webView.CoreWebView2.Source == WorkshopUrl("789")));
+                            Assert.Equal(2, queue.Items.Count);
+                            Assert.All(queue.Items, item => Assert.Equal(DownloadQueueItemStatus.Ready, item.Status));
+                            Assert.Single(favorites.Items);
+                        }
+                        finally
+                        {
+                            queueWindow.Close();
+                        }
+                    }
                 }
                 finally
                 {
@@ -106,6 +159,26 @@ public sealed class WorkshopBrowserPersistenceTests
                 }
             }
         });
+    }
+
+    private static string WorkshopUrl(string id) => $"https://steamcommunity.com/sharedfiles/filedetails/?id={id}";
+
+    private static MouseButtonEventArgs DoubleClick(object target, MouseButton button = MouseButton.Left)
+    {
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button)
+        {
+            RoutedEvent = Control.MouseDoubleClickEvent,
+        };
+        Assert.IsAssignableFrom<Control>(target).RaiseEvent(args);
+        return args;
+    }
+
+    private sealed class EmptyWorkshopClient : IWorkshopClient
+    {
+        public Task<IReadOnlyDictionary<string, WorkshopMetadata>> GetMetadataBatchAsync(
+            IReadOnlyCollection<string> workshopIds, IProgress<OperationProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyDictionary<string, WorkshopMetadata>>(new Dictionary<string, WorkshopMetadata>());
     }
 
     private static async Task WaitUntilAsync(Func<Task<bool>> condition)

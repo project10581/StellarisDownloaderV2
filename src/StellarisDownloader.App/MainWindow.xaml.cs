@@ -87,7 +87,12 @@ public partial class MainWindow : Window
 
         var window = downloadWindowFactory();
         window.Owner = this;
-        window.Closed += (_, _) => downloadWindow = null;
+        window.WorkshopRequested += ShowWorkshopBrowser;
+        window.Closed += (_, _) =>
+        {
+            window.WorkshopRequested -= ShowWorkshopBrowser;
+            downloadWindow = null;
+        };
         downloadWindow = window;
         window.Show();
     }
@@ -153,10 +158,14 @@ public partial class MainWindow : Window
             MessageBoxImage.Error);
     }
 
-    private void BrowseWorkshopButton_Click(object sender, RoutedEventArgs e)
+    private void BrowseWorkshopButton_Click(object sender, RoutedEventArgs e) => ShowWorkshopBrowser();
+
+    private void ShowWorkshopBrowser(string? workshopId = null)
     {
         if (browserWindow is not null)
         {
+            if (workshopId is not null) { browserWindow.OpenWorkshop(workshopId); }
+            if (browserWindow.WindowState == WindowState.Minimized) { browserWindow.WindowState = WindowState.Normal; }
             browserWindow.Activate();
             return;
         }
@@ -165,6 +174,7 @@ public partial class MainWindow : Window
         window.Owner = this;
         window.Closed += (_, _) => browserWindow = null;
         browserWindow = window;
+        if (workshopId is not null) { window.OpenWorkshop(workshopId); }
         window.Show();
     }
 

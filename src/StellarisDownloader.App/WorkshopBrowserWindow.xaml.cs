@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Data.Sqlite;
 using Microsoft.Web.WebView2.Core;
@@ -32,6 +33,7 @@ public partial class WorkshopBrowserWindow : Window
     private IReadOnlyList<string> knownInstalledIds = [];
     private string? currentWorkshopId;
     private bool browserInitialized;
+    private Uri? pendingWorkshopPage;
 
     public WorkshopBrowserWindow(
         DownloadQueueViewModel viewModel,
@@ -122,7 +124,8 @@ public partial class WorkshopBrowserWindow : Window
         ConfigureBrowser();
         browserInitialized = true;
         WorkshopWebView.Visibility = Visibility.Visible;
-        WorkshopWebView.CoreWebView2.Navigate(WorkshopHome.AbsoluteUri);
+        WorkshopWebView.CoreWebView2.Navigate((pendingWorkshopPage ?? WorkshopHome).AbsoluteUri);
+        pendingWorkshopPage = null;
     }
 
     private void ConfigureBrowser()
@@ -431,9 +434,47 @@ public partial class WorkshopBrowserWindow : Window
 
     private void OpenFavorite_Click(object sender, RoutedEventArgs e)
     {
-        if (browserInitialized && BrowserFavoritesList.SelectedItem is WorkshopFavorite favorite)
+        if (BrowserFavoritesList.SelectedItem is WorkshopFavorite favorite)
         {
-            WorkshopWebView.CoreWebView2.Navigate($"https://steamcommunity.com/sharedfiles/filedetails/?id={favorite.WorkshopId}");
+            OpenWorkshop(favorite.WorkshopId);
+        }
+    }
+
+    internal void OpenWorkshop(string workshopId)
+    {
+        if (closed || !WorkshopIdParser.TryParse(workshopId, out var id, out _))
+        {
+            return;
+        }
+
+        var target = new Uri($"https://steamcommunity.com/sharedfiles/filedetails/?id={id}");
+        if (browserInitialized)
+        {
+            WorkshopWebView.CoreWebView2.Navigate(target.AbsoluteUri);
+        }
+        else
+        {
+            pendingWorkshopPage = target;
+        }
+    }
+
+    private void FavoriteItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left
+            && sender is ListBoxItem { Content: WorkshopFavorite favorite })
+        {
+            OpenWorkshop(favorite.WorkshopId);
+            e.Handled = true;
+        }
+    }
+
+    private void QueueItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left
+            && sender is ListBoxItem { Content: DownloadQueueItemViewModel item })
+        {
+            OpenWorkshop(item.WorkshopId);
+            e.Handled = true;
         }
     }
 
