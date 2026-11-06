@@ -57,10 +57,32 @@
                                     Binding="{Binding DisplayTitle}"
                                     IsReadOnly="True"
                                     Width="2*" />
-                <DataGridTextColumn Header="{DynamicResource Updates.WorkshopId}"
-                                    Binding="{Binding WorkshopId}"
-                                    IsReadOnly="True"
-                                    Width="130" />
+                <DataGridTemplateColumn Header="{DynamicResource Updates.WorkshopId}"
+                                        SortMemberPath="WorkshopId"
+                                        ClipboardContentBinding="{Binding WorkshopId}"
+                                        IsReadOnly="True"
+                                        Width="130">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Margin="2,0">
+                                <Hyperlink Tag="{Binding WorkshopId}"
+                                           Click="OpenWorkshop_Click"
+                                           ToolTip="{DynamicResource Command.OpenWorkshop}">
+                                    <Hyperlink.Style>
+                                        <Style TargetType="Hyperlink">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridCell}}" Value="True">
+                                                    <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridCell}}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Hyperlink.Style>
+                                    <Run Text="{Binding WorkshopId, Mode=OneWay}" />
+                                </Hyperlink>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="{DynamicResource Updates.State}"
                                     Binding="{Binding State}"
                                     IsReadOnly="True"
